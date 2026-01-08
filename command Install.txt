@@ -1,0 +1,4 @@
+SALIN SEMUA COMMAND DI BAWAH INI
+
+pip3 install python-telegram-bot==20.7
+python3 bot_main.py

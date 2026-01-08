@@ -1,0 +1,642 @@
+cat > bot_part3.py << 'EOF'
+#!/usr/bin/env python3
+"""
+WHATSAPP APPEAL BOT - PART 3 (Main & Run)
+"""
+
+import asyncio
+from datetime import datetime
+from telegram import Update
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from bot_part1 import BOT_TOKEN, OWNER_ID, premium, email
+from bot_part2 import (
+    start_command, button_handler, fixmerah_command, 
+    fixmerahall_command, validate_phone
+)
+
+# ==================== OWNER COMMANDS ====================
+async def setemail_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set email configuration"""
+    user_id = update.effective_user.id
+    if not premium.is_any_owner(user_id):
+        await update.message.reply_text("❌ Hanya owner!")
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ Format: `/setemail email@gmail.com password`\n\n"
+            "Contoh: `/setemail mybot@gmail.com mypassword123`\n\n"
+            "*Note:* Gunakan App Password jika 2FA aktif",
+            parse_mode='Markdown'
+        )
+        return
+    
+    email_addr = context.args[0]
+    password = " ".join(context.args[1:])
+    
+    # Validasi email
+    if not "@" in email_addr or not "." in email_addr:
+        await update.message.reply_text("❌ Format email tidak valid!")
+        return
+    
+    success, message = email.set_email(email_addr, password)
+    
+    # Test email connection
+    if success:
+        test_msg = await update.message.reply_text("🔧 Testing email connection...")
+        test_success, test_msg_text = email.send_appeal("+628123456789")
+        
+        if test_success:
+            await test_msg.edit_text(
+                f"✅ Email berhasil diatur dan tested!\n"
+                f"Email: {email_addr}\n"
+                f"Status: SMTP Connected & Working"
+            )
+        else:
+            await test_msg.edit_text(
+                f"⚠️ Email diatur tapi test gagal:\n"
+                f"Error: {test_msg_text}\n\n"
+                f"Periksa:\n"
+                f"1. Email dan password benar\n"
+                f"2. Allow less secure apps ON\n"
+                f"3. Gunakan App Password jika 2FA aktif"
+            )
+    else:
+        await update.message.reply_text(message)
+
+async def addowner_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add sub-owner"""
+    user_id = update.effective_user.id
+    if not premium.is_main_owner(user_id):
+        await update.message.reply_text("❌ Hanya main owner bisa menambah sub-owner!")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Format: `/addowner user_id`\n"
+            "Contoh: `/addowner 123456789`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        target_id = int(context.args[0])
+        target_user = await context.bot.get_chat(target_id)
+        username = target_user.username or target_user.first_name
+        
+        success, message = premium.add_sub_owner(target_id, username)
+        await update.message.reply_text(message)
+        
+        # Kirim notifikasi ke target user
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=f"""👑 *SELAMAT! ANDA SEKARANG SUB-OWNER*
+
+Halo {target_user.first_name},
+
+Anda sekarang memiliki akses owner di WhatsApp Appeal Bot!
+
+🎯 *FITUR YANG DIDAPAT:*
+• Semua perintah owner
+• Bisa manage user lain
+• Akses statistik lengkap
+
+⚠️ *PERHATIAN:*
+• Jangan menyalahgunakan akses
+• Jaga kerahasiaan data
+
+📋 *OWNER COMMANDS:*
+• /addakses - Tambah premium user
+• /addbuyer - Tambah buyer user
+• /stats - Lihat statistik
+• /broadcast - Kirim pesan ke semua user
+
+👑 Ditambahkan oleh: {update.effective_user.first_name}"""
+            )
+        except:
+            pass
+            
+    except ValueError:
+        await update.message.reply_text("❌ User ID harus angka!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def removeowner_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove sub-owner"""
+    user_id = update.effective_user.id
+    if not premium.is_main_owner(user_id):
+        await update.message.reply_text("❌ Hanya main owner bisa menghapus sub-owner!")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Format: `/removeowner user_id`\n"
+            "Contoh: `/removeowner 123456789`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        target_id = int(context.args[0])
+        success, message = premium.remove_sub_owner(target_id)
+        await update.message.reply_text(message)
+        
+        # Kirim notifikasi ke target user
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=f"""⚠️ *AKSES OWNER DIHAPUS*
+
+Halo,
+
+Akses owner Anda telah dihapus dari WhatsApp Appeal Bot.
+
+Jika ini kesalahan, hubungi @Fixmerahbydho"""
+            )
+        except:
+            pass
+            
+    except ValueError:
+        await update.message.reply_text("❌ User ID harus angka!")
+
+async def addakses_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add premium access"""
+    user_id = update.effective_user.id
+    if not premium.is_any_owner(user_id):
+        await update.message.reply_text("❌ Hanya owner!")
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ Format: `/addakses user_id days`\n"
+            "Contoh: `/addakses 123456789 30` (30 hari)",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        target_id = int(context.args[0])
+        days = int(context.args[1])
+        
+        if days <= 0:
+            await update.message.reply_text("❌ Days harus lebih dari 0!")
+            return
+        
+        success, message = premium.add_premium_access(target_id, days)
+        
+        # Kirim notifikasi ke user
+        try:
+            target_user = await context.bot.get_chat(target_id)
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=f"""⭐ *SELAMAT! ANDA SEKARANG PREMIUM*
+
+Halo {target_user.first_name},
+
+Anda sekarang memiliki akses premium selama {days} hari!
+
+🎯 *FITUR PREMIUM:*
+• Unlimited /fixmerah
+• Tanpa batas harian
+• Prioritas support
+
+⏰ Expired: {premium.data['premium_users'][str(target_id)]['expires']}
+
+Ditambahkan oleh: {update.effective_user.first_name}"""
+            )
+        except:
+            pass
+        
+        await update.message.reply_text(message)
+        
+    except ValueError:
+        await update.message.reply_text("❌ ID dan days harus angka!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def addbuyer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add buyer access"""
+    user_id = update.effective_user.id
+    if not premium.is_any_owner(user_id):
+        await update.message.reply_text("❌ Hanya owner!")
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ Format: `/addbuyer user_id days`\n"
+            "Contoh: `/addbuyer 123456789 30` (30 hari)",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        target_id = int(context.args[0])
+        days = int(context.args[1])
+        
+        if days <= 0:
+            await update.message.reply_text("❌ Days harus lebih dari 0!")
+            return
+        
+        success, message = premium.add_buyer_access(target_id, days)
+        
+        # Kirim notifikasi ke user
+        try:
+            target_user = await context.bot.get_chat(target_id)
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=f"""💰 *SELAMAT! ANDA SEKARANG BUYER*
+
+Halo {target_user.first_name},
+
+Anda sekarang memiliki akses buyer selama {days} hari!
+
+🎯 *FITUR BUYER:*
+• Semua fitur premium
+• Batch sending (/fixmerahall)
+• Prioritas tinggi
+• Support 24/7
+
+⏰ Expired: {premium.data['buyer_users'][str(target_id)]['expires']}
+
+Ditambahkan oleh: {update.effective_user.first_name}"""
+            )
+        except:
+            pass
+        
+        await update.message.reply_text(message)
+        
+    except ValueError:
+        await update.message.reply_text("❌ ID dan days harus angka!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show bot statistics"""
+    user_id = update.effective_user.id
+    if not premium.is_any_owner(user_id):
+        await update.message.reply_text("❌ Hanya owner!")
+        return
+    
+    total_users = len(premium.data["users"])
+    premium_users = len(premium.data["premium_users"])
+    buyer_users = len(premium.data["buyer_users"])
+    verified = len(premium.data.get("verified_users", []))
+    sub_owners = len(premium.data["owners"]["sub_owners"])
+    
+    # Hitung total fixmerah
+    total_fixmerah = 0
+    today_fixmerah = 0
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    for user_id_str, user_data in premium.data["users"].items():
+        total_fixmerah += user_data.get("fixmerah_count", 0)
+        
+        # Hitung yang hari ini
+        last_used = user_data.get("last_used")
+        if last_used and last_used.startswith(today):
+            today_fixmerah += 1
+    
+    # Hitung aktivitas 7 hari terakhir
+    recent_activity = {}
+    for i in range(7):
+        date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+        count = 0
+        for user_data in premium.data["users"].values():
+            last_used = user_data.get("last_used")
+            if last_used and last_used.startswith(date):
+                count += 1
+        recent_activity[date] = count
+    
+    text = f"""📊 *STATISTIK BOT*
+
+👥 *USERS:*
+• Total Users: {total_users} user
+• Premium: {premium_users} user
+• Buyer: {buyer_users} user
+• Verified: {verified} user
+• Sub-Owners: {sub_owners} user
+
+📨 *APPEAL STATS:*
+• Total Appeal: {total_fixmerah} kali
+• Hari Ini: {today_fixmerah} kali
+• Rata-rata: {total_fixmerah/max(total_users, 1):.1f}/user
+
+👑 *OWNERSHIP:*
+• Main Owner: {OWNER_ID}
+• Sub Owners: {', '.join(list(premium.data['owners']['sub_owners'].keys())[:5]) or 'None'}
+{f'• Dan {len(premium.data["owners"]["sub_owners"])-5} lainnya...' if len(premium.data['owners']['sub_owners']) > 5 else ''}
+
+📧 *EMAIL SYSTEM:*
+• Email: {email.config.get('email', '❌ Not set')}
+• Status: {'✅ Configured' if email.config.get('email') else '❌ Not configured'}
+
+⏰ *UPDATE:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+📈 *7 HARI TERAKHIR:*
+"""
+    
+    # Tambah data 7 hari
+    for date, count in recent_activity.items():
+        text += f"• {date}: {count} appeal\n"
+    
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Broadcast message to all users"""
+    user_id = update.effective_user.id
+    if not premium.is_any_owner(user_id):
+        await update.message.reply_text("❌ Hanya owner!")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Format: `/broadcast pesan_anda`\n"
+            "Contoh: `/broadcast Update baru tersedia!`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    message = " ".join(context.args)
+    users = premium.data["users"]
+    
+    if not users:
+        await update.message.reply_text("❌ Tidak ada user untuk dikirimi broadcast!")
+        return
+    
+    progress_msg = await update.message.reply_text(
+        f"""📢 *MEMULAI BROADCAST...*
+
+📊 Target: {len(users)} user
+📝 Pesan: {message[:50]}...
+⏰ Mulai: {datetime.now().strftime('%H:%M:%S')}
+
+Mohon tunggu..."""
+    )
+    
+    sent = 0
+    failed = 0
+    failed_users = []
+    
+    for uid_str in users:
+        try:
+            await context.bot.send_message(
+                chat_id=int(uid_str),
+                text=f"""📢 *BROADCAST FROM OWNER*
+
+{message}
+
+—
+🤖 *WhatsApp Appeal Bot*
+👑 Owner: @Fixmerahbydho""",
+                parse_mode='Markdown'
+            )
+            sent += 1
+            
+            # Update progress setiap 10 user
+            if sent % 10 == 0:
+                await progress_msg.edit_text(
+                    f"""📢 *BROADCAST ONGOING...*
+
+✅ Terkirim: {sent} user
+❌ Gagal: {failed} user
+📊 Progress: {sent}/{len(users)} ({sent/len(users)*100:.1f}%)
+
+⏰ Estimasi selesai: {(len(users)-sent)*0.2:.0f} detik lagi"""
+                )
+            
+            await asyncio.sleep(0.2)  # Delay untuk hindari rate limit
+            
+        except Exception as e:
+            failed += 1
+            failed_users.append(uid_str)
+            print(f"Failed to send to {uid_str}: {e}")
+    
+    result_text = f"""✅ *BROADCAST SELESAI!*
+
+📊 *HASIL:*
+• 📤 Berhasil: {sent} user
+• ❌ Gagal: {failed} user
+• 📈 Total: {len(users)} user
+
+⏰ *WAKTU:*
+• Mulai: {datetime.now().strftime('%H:%M:%S')}
+• Durasi: ±{(sent+failed)*0.2:.0f} detik
+
+{f'👥 *GAGAL KE:* {", ".join(failed_users[:10])}' if failed_users else ''}
+{f'...dan {len(failed_users)-10} lainnya' if len(failed_users) > 10 else ''}"""
+    
+    await progress_msg.edit_text(result_text, parse_mode='Markdown')
+
+# ==================== USER COMMANDS ====================
+async def cekakses_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check user access"""
+    user_id = update.effective_user.id
+    access_type = premium.get_user_access_type(user_id)
+    user_data = premium.data["users"].get(str(user_id), {})
+    fixmerah_count = user_data.get("fixmerah_count", 0)
+    join_date = user_data.get("join_date", "Unknown")
+    last_used = user_data.get("last_used", "Belum pernah")
+    
+    if access_type == "owner":
+        status = "👑 *ANDA ADALAH OWNER*"
+        features = """• Akses penuh ke semua fitur
+• Menu Owner tersedia
+• Bisa manage user lain
+• Buka semua command"""
+        color = "🟡"
+    elif access_type == "buyer":
+        status = "💰 *ANDA ADALAH BUYER*"
+        features = """• Fitur /fixmerah & /fixmerahall
+• Akses batch sending
+• Prioritas support
+• Unlimited appeal"""
+        color = "🟢"
+    elif access_type == "premium":
+        status = "⭐ *ANDA ADALAH PREMIUM*"
+        features = """• Fitur /fixmerah unlimited
+• Tanpa batas harian
+• Support reguler
+• No cooldown"""
+        color = "🔵"
+    else:
+        status = "👤 *BELUM ADA AKSES KHUSUS*"
+        features = """• Harus verifikasi dulu (/start)
+• Akses fitur dasar
+• Hubungi owner untuk upgrade
+• Cooldown 10 menit"""
+        color = "⚪"
+    
+    # Cek expiry jika premium/buyer
+    expiry_info = ""
+    if access_type == "premium" and str(user_id) in premium.data["premium_users"]:
+        expiry = premium.data["premium_users"][str(user_id)].get("expires", "Unknown")
+        expiry_info = f"\n⏰ *Expired:* {expiry}"
+    elif access_type == "buyer" and str(user_id) in premium.data["buyer_users"]:
+        expiry = premium.data["buyer_users"][str(user_id)].get("expires", "Unknown")
+        expiry_info = f"\n⏰ *Expired:* {expiry}"
+    
+    text = f"""📋 *INFO AKUN ANDA*
+
+{color} {status}
+
+👤 *DATA USER:*
+• Nama: {update.effective_user.first_name}
+• Username: @{update.effective_user.username or 'Tidak ada'}
+• ID: `{user_id}`
+• Bergabung: {join_date}
+
+📊 *STATISTIK:*
+• Total appeal: {fixmerah_count} kali
+• Terakhir digunakan: {last_used}{expiry_info}
+
+🔓 *FITUR YANG DAPAT DIAKSES:*
+{features}
+
+💬 *UPGRADE:* Hubungi @Fixmerahbydho"""
+    
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+async def hubungiowner_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Contact owner"""
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Format: `/hubungiowner pesan_anda`\n"
+            "Contoh: `/hubungiowner Saya mau upgrade ke buyer`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    user_id = update.effective_user.id
+    user_name = update.effective_user.first_name
+    username = f"@{update.effective_user.username}" if update.effective_user.username else "No username"
+    message = " ".join(context.args)
+    
+    try:
+        await context.bot.send_message(
+            chat_id=OWNER_ID,
+            text=f"""📨 *PESAN DARI USER*
+
+👤 *User:* {user_name}
+🆔 *ID:* `{user_id}`
+📛 *Username:* {username}
+💬 *Pesan:* {message}
+
+⏰ *Waktu:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+*Reply dengan:* `/reply {user_id} [pesan]`""",
+            parse_mode='Markdown'
+        )
+        await update.message.reply_text("✅ Pesan terkirim ke owner!")
+    except:
+        await update.message.reply_text(
+            "❌ Gagal mengirim pesan.\n"
+            "Hubungi langsung: @Fixmerahbydho"
+        )
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show menu"""
+    await start_command(update, context)
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show help"""
+    help_text = """🤖 *BANTUAN WHATSAPP APPEAL BOT*
+
+📌 *FITUR UTAMA:*
+• /start - Mulai bot & verifikasi
+• /menu - Tampilkan menu utama
+• /help - Tampilkan bantuan ini
+• /about - Info tentang bot
+
+📱 *FITUR APPEAL:*
+• /fixmerah [nomor] - Kirim appeal ke WhatsApp
+  Contoh: /fixmerah +628123456789
+• /fixmerahall [nomor1 nomor2] - Kirim batch (buyer only)
+  Maksimal 5 nomor per batch
+
+👤 *FITUR USER:*
+• /cekakses - Cek status akses Anda
+• /hubungiowner [pesan] - Hubungi owner
+
+👑 *FITUR OWNER:* (hanya untuk owner)
+• /setemail [email] [pass] - Atur email bot
+• /addowner [user_id] - Tambah sub-owner
+• /removeowner [user_id] - Hapus sub-owner
+• /addakses [id] [days] - Tambah premium user
+• /addbuyer [id] [days] - Tambah buyer user
+• /stats - Lihat statistik bot
+• /broadcast [pesan] - Kirim pesan ke semua user
+• /reply [id] [pesan] - Balas ke user
+
+🌍 *FORMAT NOMOR:*
+Support semua kode negara:
+• Indonesia: +62, 08xxx, 628xxx
+• USA: +1xxxxxxxxxx
+• UK: +44xxxxxxxxxx
+• Malaysia: +60xxxxxxxx
+• Singapore: +65xxxxxxxx
+• DLL
+
+⚠️ *CATATAN:*
+1. Harus verifikasi dulu (/start)
+2. Fitur buyer hanya untuk user buyer
+3. Email harus diatur oleh owner
+4. Broadcast hanya untuk owner
+
+📞 *SUPPORT:* @Fixmerahbydho"""
+    
+    await update.message.reply_text(help_text, parse_mode='Markdown')
+
+async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show about info"""
+    about_text = f"""🤖 *WHATSAPP APPEAL BOT*
+
+🔧 *Versi:* 3.0 (Enhanced)
+👑 *Dibuat oleh:* @Fixmerahbydho
+📢 *Channel:* https://t.me/tutorbekuintele
+👥 *Group:* https://t.me/+WOtJ0Iv7slkzMTNl
+
+✨ *FITUR UTAMA:*
+✅ Verifikasi channel & group wajib
+✅ Kirim appeal via email ke WhatsApp Support
+✅ Support semua kode negara (200+ countries)
+✅ Batch sending untuk buyer
+✅ Multi-level access system
+✅ Database JSON local
+✅ Broadcast system
+✅ Sub-owner system
+
+🔐 *LEVEL SYSTEM:*
+1. 👑 Owner - Full access
+2. 💰 Buyer - Full features + batch
+3. ⭐ Premium - Unlimited appeal
+4. 👤 Free - Basic features
+
+📧 *EMAIL SYSTEM:*
+• Menggunakan SMTP Gmail
+• Kirim ke: support@support.whatsapp.com
+• Format email profesional
+• Auto-retry on failure
+
+📊 *STATISTIK:*
+• Total Users: {len(premium.data['users'])}
+• Total Appeal: {sum(u.get('fixmerah_count', 0) for u in premium.data['users'].values())}
+• Email Status: {'✅ Configured' if email.config.get('email') else '❌ Not configured'}
+
+💬 *SUPPORT & FEEDBACK:*
+Hubungi @Fixmerahbydho untuk bantuan"""
+    
+    await update.message.reply_text(about_text, parse_mode='Markdown')
+
+async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner reply to user"""
+    user_id = update.effective_user.id
+    if not premium.is_any_owner(user_id):
+        await update.message.reply_text("❌ Hanya owner!")
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ Format: `/reply user_id pesan`\n"
+            "Contoh: `/reply 123456789 Terima kasih pesannya`",
+ 

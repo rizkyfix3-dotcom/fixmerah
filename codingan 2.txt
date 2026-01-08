@@ -1,0 +1,521 @@
+cat > bot_part2.py << 'EOF'
+#!/usr/bin/env python3
+"""
+WHATSAPP APPEAL BOT - PART 2 (Handlers & Logic)
+"""
+
+import re
+import asyncio
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+from bot_part1 import (
+    premium, email, MAINTENANCE,
+    VERIFICATION_CHANNEL, VERIFICATION_GROUP,
+    VERIFICATION_CHANNEL_LINK, VERIFICATION_GROUP_LINK,
+    MAX_BATCH_SIZE, BATCH_DELAY_SECONDS
+)
+
+# ==================== VALIDASI NOMOR TELEPON ====================
+def validate_phone(phone_input):
+    """Validasi dan format nomor telepon"""
+    if not phone_input:
+        return False, "❌ Masukkan nomor telepon!"
+    
+    # Hapus spasi dan karakter khusus
+    phone = re.sub(r'[^\d\+]', '', phone_input)
+    
+    # Cek panjang minimal
+    if len(phone) < 8:
+        return False, "❌ Nomor telepon terlalu pendek!"
+    
+    # Format yang diterima:
+    # +62xxxxxxxxxx, 62xxxxxxxxxx, 08xxxxxxxx, 628xxxxxxxx
+    
+    # Jika diawali dengan 0, ganti dengan 62
+    if phone.startswith('0'):
+        phone = '62' + phone[1:]
+    elif phone.startswith('8') and len(phone) <= 11:
+        phone = '62' + phone
+    elif phone.startswith('+'):
+        phone = phone[1:]  # Hapus +
+    
+    # Pastikan hanya angka
+    if not phone.isdigit():
+        return False, "❌ Nomor telepon harus angka!"
+    
+    # Tambahkan + di depan
+    formatted = '+' + phone
+    
+    return True, formatted
+
+# ==================== START COMMAND ====================
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /start command"""
+    user_id = update.effective_user.id
+    username = update.effective_user.username or update.effective_user.first_name
+    
+    # Cek maintenance
+    if MAINTENANCE and not premium.is_any_owner(user_id):
+        await update.message.reply_text("🔧 Bot sedang dalam maintenance. Coba lagi nanti!")
+        return
+    
+    # Tambah user ke database
+    premium.add_user(user_id, username)
+    
+    # Buat keyboard untuk verifikasi
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ VERIFIKASI CHANNEL", url=VERIFICATION_CHANNEL_LINK),
+            InlineKeyboardButton("✅ VERIFIKASI GROUP", url=VERIFICATION_GROUP_LINK)
+        ],
+        [InlineKeyboardButton("✅ SAYA SUDAH VERIFIKASI", callback_data="verified")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    welcome_text = f"""
+👋 *Halo {update.effective_user.first_name}!*
+
+🤖 Selamat datang di *WhatsApp Appeal Bot*
+🔧 Bot untuk mengirim appeal ke WhatsApp Support
+
+📋 *SYARAT MENGGUNAKAN BOT:*
+1. Join Channel: @tutorbekuintele
+2. Join Group: @tutorbekuintele_group
+3. Klik tombol "SAYA SUDAH VERIFIKASI" setelah join
+
+🚀 *FITUR BOT:*
+✅ Kirim appeal ke WhatsApp Support
+✅ Support semua kode negara
+✅ Batch sending (buyer only)
+✅ System otomatis 24/7
+
+💎 *LEVEL AKUN:*
+• 👑 Owner - Akses penuh
+• 💰 Buyer - Fitur lengkap + batch
+• ⭐ Premium - Unlimited appeal
+• 👤 Free - Fitur dasar
+
+📊 *STATUS ANDA:*
+• User: {username}
+• ID: `{user_id}`
+• Status: {'✅ Verified' if premium.is_user_verified(user_id) else '❌ Belum verified'}
+
+Klik tombol di bawah untuk verifikasi:
+    """
+    
+    await update.message.reply_text(
+        welcome_text,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+# ==================== BUTTON HANDLER ====================
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle button callbacks"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    data = query.data
+    
+    if data == "verified":
+        # Cek apakah user sudah join channel dan group
+        try:
+            # Cek membership di channel
+            channel_member = await context.bot.get_chat_member(
+                VERIFICATION_CHANNEL, user_id
+            )
+            channel_joined = channel_member.status in ['member', 'administrator', 'creator']
+            
+            # Cek membership di group
+            group_member = await context.bot.get_chat_member(
+                VERIFICATION_GROUP, user_id
+            )
+            group_joined = group_member.status in ['member', 'administrator', 'creator']
+            
+            if channel_joined and group_joined:
+                premium.mark_user_verified(user_id)
+                
+                # Kirim menu setelah verifikasi
+                keyboard = [
+                    [InlineKeyboardButton("📱 FIXMERAH", callback_data="menu_fixmerah")],
+                    [InlineKeyboardButton("📊 CEK AKSES", callback_data="menu_cekakses")],
+                    [InlineKeyboardButton("💬 HUBUNGI OWNER", callback_data="menu_hubungi")],
+                    [InlineKeyboardButton("📋 HELP", callback_data="menu_help")]
+                ]
+                
+                if premium.is_any_owner(user_id):
+                    keyboard.append([InlineKeyboardButton("👑 OWNER MENU", callback_data="menu_owner")])
+                
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.edit_message_text(
+                    f"""✅ *VERIFIKASI BERHASIL!*
+
+Selamat {query.from_user.first_name}, kamu sekarang bisa menggunakan bot!
+
+🎯 *FITUR YANG TERSEDIA:*
+• /fixmerah [nomor] - Kirim appeal
+• /cekakses - Cek status akun
+• /menu - Tampilkan menu
+
+🚀 *UPGRADE KE PREMIUM/BUYER:*
+Hubungi @Fixmerahbydho untuk info lebih lanjut!
+
+Pilih menu di bawah:""",
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.edit_message_text(
+                    f"""❌ *VERIFIKASI GAGAL!*
+
+Kamu harus join kedua channel dan group:
+
+1. Channel: {VERIFICATION_CHANNEL_LINK}
+2. Group: {VERIFICATION_GROUP_LINK}
+
+Setelah join, klik tombol verifikasi lagi!""",
+                    parse_mode='Markdown'
+                )
+                
+        except Exception as e:
+            await query.edit_message_text(
+                f"""❌ *ERROR VERIFIKASI!*
+
+Pastikan kamu sudah join:
+• Channel: {VERIFICATION_CHANNEL_LINK}
+• Group: {VERIFICATION_GROUP_LINK}
+
+Error: {str(e)}""",
+                parse_mode='Markdown'
+            )
+    
+    elif data == "menu_fixmerah":
+        await query.edit_message_text(
+            """📱 *FITUR FIXMERAH*
+
+📌 Format perintah:
+• /fixmerah [nomor]
+  Contoh: /fixmerah +628123456789
+
+• /fixmerahall [nomor1] [nomor2] ... (buyer only)
+  Contoh: /fixmerahall +628123456789 +628987654321
+
+🌍 *FORMAT NOMOR:*
+• Indonesia: +62, 08xxx, 628xxx
+• USA: +1xxxxxxxxxx
+• UK: +44xxxxxxxxxx
+• DLL
+
+📞 Contoh: /fixmerah +628123456789""",
+            parse_mode='Markdown'
+        )
+    
+    elif data == "menu_cekakses":
+        access_type = premium.get_user_access_type(user_id)
+        user_data = premium.data["users"].get(str(user_id), {})
+        
+        if access_type == "owner":
+            status = "👑 OWNER"
+        elif access_type == "buyer":
+            status = "💰 BUYER"
+        elif access_type == "premium":
+            status = "⭐ PREMIUM"
+        else:
+            status = "👤 FREE USER"
+        
+        await query.edit_message_text(
+            f"""📊 *STATUS AKUN ANDA*
+
+👤 Nama: {query.from_user.first_name}
+🆔 ID: `{user_id}`
+📛 Username: @{query.from_user.username or 'Tidak ada'}
+📅 Bergabung: {user_data.get('join_date', 'Unknown')}
+🎯 Status: {status}
+📨 Total Appeal: {user_data.get('fixmerah_count', 0)} kali
+
+💎 *UPGRADE:* Hubungi @Fixmerahbydho""",
+            parse_mode='Markdown'
+        )
+    
+    elif data == "menu_hubungi":
+        await query.edit_message_text(
+            """💬 *HUBUNGI OWNER*
+
+Untuk bantuan, upgrade, atau masalah teknis:
+
+👑 Owner: @Fixmerahbydho
+📢 Channel: https://t.me/tutorbekuintele
+
+📝 *Format pesan:*
+/hubungiowner [pesan_anda]
+
+Contoh: /hubungiowner Saya mau upgrade ke buyer""",
+            parse_mode='Markdown'
+        )
+    
+    elif data == "menu_help":
+        await query.edit_message_text(
+            """📋 *BANTUAN BOT*
+
+🤖 *PERINTAH UTAMA:*
+• /start - Mulai bot
+• /menu - Tampilkan menu
+• /help - Bantuan ini
+• /about - Info bot
+
+📱 *APPEAL COMMANDS:*
+• /fixmerah [nomor] - Kirim appeal
+• /fixmerahall [nomor1 nomor2] - Batch (buyer)
+
+👤 *USER COMMANDS:*
+• /cekakses - Cek status
+• /hubungiowner [pesan] - Hubungi owner
+
+👑 *OWNER COMMANDS:* (owner only)
+• /setemail [email] [pass] - Atur email
+• /addakses [id] [days] - Tambah premium
+• /addbuyer [id] [days] - Tambah buyer
+• /addowner [id] - Tambah sub-owner
+• /stats - Statistik bot
+• /broadcast [pesan] - Broadcast
+
+📞 Support: @Fixmerahbydho""",
+            parse_mode='Markdown'
+        )
+    
+    elif data == "menu_owner":
+        if premium.is_any_owner(user_id):
+            await query.edit_message_text(
+                """👑 *OWNER MENU*
+
+📋 *PERINTAH OWNER:*
+• /setemail [email] [pass] - Atur email bot
+• /addowner [user_id] - Tambah sub-owner
+• /removeowner [user_id] - Hapus sub-owner
+• /addakses [id] [days] - Tambah premium
+• /addbuyer [id] [days] - Tambah buyer
+• /stats - Lihat statistik
+• /broadcast [pesan] - Kirim ke semua user
+• /reply [id] [pesan] - Balas ke user
+
+📊 *DATA SYSTEM:*
+• User data: data/users.json
+• Email config: data/email_config.json
+
+⚠️ *PERHATIAN:* Gunakan dengan bijak!""",
+                parse_mode='Markdown'
+            )
+
+# ==================== FIXMERAH COMMAND ====================
+async def fixmerah_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /fixmerah command"""
+    user_id = update.effective_user.id
+    
+    # Cek verifikasi
+    if not premium.is_user_verified(user_id):
+        await update.message.reply_text(
+            f"""❌ *BELUM TERVERIFIKASI!*
+
+Kamu harus verifikasi dulu:
+1. Join Channel: {VERIFICATION_CHANNEL_LINK}
+2. Join Group: {VERIFICATION_GROUP_LINK}
+3. Klik /start untuk verifikasi"""
+        )
+        return
+    
+    # Cek maintenance
+    if MAINTENANCE and not premium.is_any_owner(user_id):
+        await update.message.reply_text("🔧 Bot sedang maintenance. Coba lagi nanti!")
+        return
+    
+    # Cek argumen
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Format: `/fixmerah [nomor_telepon]`\n"
+            "Contoh: `/fixmerah +628123456789`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    phone_input = " ".join(context.args)
+    
+    # Validasi nomor
+    success, result = validate_phone(phone_input)
+    if not success:
+        await update.message.reply_text(result)
+        return
+    
+    phone_number = result
+    
+    # Tampilkan proses
+    processing_msg = await update.message.reply_text(
+        f"""⏳ *MENGIRIM APPEAL...*
+
+📱 Nomor: `{phone_number}`
+👤 Pengirim: {update.effective_user.first_name}
+🆔 ID: `{user_id}`
+⏰ Waktu: {datetime.now().strftime('%H:%M:%S')}
+
+Mohon tunggu..."""
+    )
+    
+    # Kirim appeal via email
+    success, message = email.send_appeal(phone_number)
+    
+    if success:
+        # Update counter
+        premium.update_fixmerah_count(user_id)
+        
+        await processing_msg.edit_text(
+            f"""✅ *APPEAL TERKIRIM!*
+
+📱 Nomor: `{phone_number}`
+✅ Status: Berhasil dikirim ke WhatsApp Support
+📧 Email: {email.config.get('email', 'Not set')}
+🕐 Waktu: {datetime.now().strftime('%H:%M:%S')}
+
+📨 Appeal telah dikirim ke:
+support@support.whatsapp.com
+
+💡 *Tips:* Tunggu 24-48 jam untuk respons dari WhatsApp."""
+        )
+    else:
+        await processing_msg.edit_text(
+            f"""❌ *GAGAL MENGIRIM!*
+
+📱 Nomor: `{phone_number}`
+❌ Error: {message}
+
+🔧 *SOLUSI:*
+1. Periksa koneksi internet
+2. Owner: Cek email config (/setemail)
+3. Hubungi @Fixmerahbydho jika masalah berlanjut"""
+        )
+
+# ==================== FIXMERAHALL COMMAND (BUYER ONLY) ====================
+async def fixmerahall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /fixmerahall command (batch sending)"""
+    user_id = update.effective_user.id
+    
+    # Cek akses buyer
+    if not premium.is_any_owner(user_id) and str(user_id) not in premium.data["buyer_users"]:
+        await update.message.reply_text(
+            "❌ *FITUR BUYER ONLY!*\n\n"
+            "Fitur ini hanya untuk user buyer.\n"
+            "Hubungi @Fixmerahbydho untuk upgrade!"
+        )
+        return
+    
+    # Cek verifikasi
+    if not premium.is_user_verified(user_id):
+        await update.message.reply_text("❌ Belum terverifikasi! Gunakan /start dulu.")
+        return
+    
+    # Cek argumen
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Format: `/fixmerahall [nomor1] [nomor2] ...`\n"
+            "Contoh: `/fixmerahall +628123456789 +628987654321`\n\n"
+            f"*Maksimal {MAX_BATCH_SIZE} nomor per batch*",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Batasi jumlah nomor
+    if len(context.args) > MAX_BATCH_SIZE:
+        await update.message.reply_text(
+            f"❌ Maksimal {MAX_BATCH_SIZE} nomor per batch!"
+        )
+        return
+    
+    # Proses batch
+    phones = context.args
+    valid_phones = []
+    invalid_phones = []
+    
+    # Validasi semua nomor
+    for phone in phones:
+        success, result = validate_phone(phone)
+        if success:
+            valid_phones.append(result)
+        else:
+            invalid_phones.append(f"{phone}: {result}")
+    
+    if not valid_phones:
+        await update.message.reply_text(
+            "❌ Tidak ada nomor yang valid!\n" + "\n".join(invalid_phones)
+        )
+        return
+    
+    # Tampilkan progress
+    progress_msg = await update.message.reply_text(
+        f"""⏳ *MEMPROSES BATCH...*
+
+📱 Total: {len(phones)} nomor
+✅ Valid: {len(valid_phones)} nomor
+❌ Invalid: {len(invalid_phones)} nomor
+
+⏰ Estimasi: {len(valid_phones) * BATCH_DELAY_SECONDS} detik
+
+Memulai pengiriman..."""
+    )
+    
+    # Kirim satu per satu dengan delay
+    success_count = 0
+    fail_count = 0
+    results = []
+    
+    for i, phone in enumerate(valid_phones, 1):
+        try:
+            # Update progress
+            await progress_msg.edit_text(
+                f"""⏳ *MENGIRIM BATCH...*
+
+📊 Progress: {i}/{len(valid_phones)}
+📱 Sedang mengirim: `{phone}`
+✅ Berhasil: {success_count}
+❌ Gagal: {fail_count}
+
+⏰ Delay: {BATCH_DELAY_SECONDS} detik"""
+            )
+            
+            # Kirim appeal
+            success, message = email.send_appeal(phone)
+            
+            if success:
+                success_count += 1
+                results.append(f"✅ {phone}: Berhasil")
+                # Update counter untuk user
+                premium.update_fixmerah_count(user_id)
+            else:
+                fail_count += 1
+                results.append(f"❌ {phone}: Gagal - {message}")
+            
+            # Delay antara pengiriman
+            if i < len(valid_phones):
+                await asyncio.sleep(BATCH_DELAY_SECONDS)
+                
+        except Exception as e:
+            fail_count += 1
+            results.append(f"❌ {phone}: Error - {str(e)}")
+    
+    # Kirim hasil akhir
+    result_text = f"""📊 *BATCH COMPLETE!*
+
+📱 Total diproses: {len(valid_phones)} nomor
+✅ Berhasil: {success_count}
+❌ Gagal: {fail_count}
+
+⏰ Selesai: {datetime.now().strftime('%H:%M:%S')}
+
+📋 *HASIL DETAIL:*
+""" + "\n".join(results[:10])  # Batasi output
+
+    if len(results) > 10:
+        result_text += f"\n\n...dan {len(results)-10} hasil lainnya"
+
+    await progress_msg.edit_text(result_text)
+EOF
