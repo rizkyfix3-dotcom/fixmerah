@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""WHATSAPP APPEAL BOT - PART 1 (Config & Classes)"""
+
+import os
+import sys
+import logging
+import json
+import smtplib
+from datetime import datetime
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import re
+
+# ==================== CONFIG ====================
+BOT_TOKEN = "8260366581:AAEIkvW8PIgn5aYNukbEux9MNmPY0HjxgWQ"
+OWNER_ID = 8497378857
+BOT_OWNER = "@Fixmerahbydho"
+OWNER_CHANNEL = "https://t.me/tutorbekuintele"
+
+# Verifikasi Channel & Group
+VERIFICATION_CHANNEL = -1003326721160
+VERIFICATION_GROUP = -1003493385950
+VERIFICATION_CHANNEL_LINK = "https://t.me/tutorbekuintele"
+VERIFICATION_GROUP_LINK = "https://t.me/+WOtJ0Iv7slkzMTNl"
+
+# System Config
+MAX_BATCH_SIZE = 5
+BATCH_DELAY_SECONDS = 2
+PREMIUM_COOLDOWN_MINUTES = 10
+
+# Setup logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+MAINTENANCE = False
+
+# ==================== PREMIUM SYSTEM ====================
+class PremiumSystem:
+    def __init__(self):
+        self.users_file = "data/users.json"
+        self.load_data()
+
+    def load_data(self):
+        try:
+            if os.path.exists(self.users_file):
+                with open(self.users_file, 'r') as f:
+                    self.data = json.load(f)
+            else:
+                self.data = self.create_default_data()
+                self.save_data()
+        except:
+            self.data = self.create_default_data()
+            self.save_data()
+
+    def create_default_data(self):
+        return {
+            "users": {},
+            "premium_users": {},
+            "buyer_users": {},
+            "owners": {"main_owners": [OWNER_ID], "sub_owners": {}},
+            "verified_users": []
+        }
+
+    def save_data(self):
+        try:
+            with open(self.users_file, 'w') as f:
+                json.dump(self.data, f, indent=2)
+        except:
+            pass
+
+    # ==================== VERIFIKASI ====================
+    def mark_user_verified(self, user_id):
+        user_id_str = str(user_id)
+        if user_id_str not in self.data.get("verified_users", []):
+            self.data.setdefault("verified_users", []).append(user_id_str)
+            self.save_data()
+            return True
+        return False
+
+    def is_user_verified(self, user_id):
+        user_id_str = str(user_id)
+        if self.is_any_owner(user_id):
+            return True
+        return user_id_str in self.data.get("verified_users", [])
+
+    # ==================== OWNER ====================
+    def is_any_owner(self, user_id):
+        user_id_str = str(user_id)
+        if user_id_str == str(OWNER_ID):
+            return True
+        return user_id_str in self.data["owners"]["sub_owners"]
+
+    def is_main_owner(self, user_id):
+        return str(user_id) == str(OWNER_ID)
+
+    def add_sub_owner(self, user_id, username):
+        user_id_str = str(user_id)
+        if user_id_str not in self.data["owners"]["sub_owners"]:
+            self.data["owners"]["sub_owners"][user_id_str] = {
+                "username": username,
+                "added_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "added_by": "main_owner"
+            }
+            self.save_data()
+            return True, f"✅ Sub-owner ditambahkan: {username} (ID: {user_id})"
+        return False, f"❌ User sudah menjadi sub-owner"
+
+    def remove_sub_owner(self, user_id):
+        user_id_str = str(user_id)
+        if user_id_str in self.data["owners"]["sub_owners"]:
+            username = self.data["owners"]["sub_owners"][user_id_str].get("username", "Unknown")
+            del self.data["owners"]["sub_owners"][user_id_str]
+            self.save_data()
+            return True, f"✅ Sub-owner dihapus: {username} (ID: {user_id})"
+        return False, "❌ User bukan sub-owner"
+
+    # ==================== USER ====================
+    def add_user(self, user_id, username):
+        user_id_str = str(user_id)
+        if user_id_str not in self.data["users"]:
+            self.data["users"][user_id_str] = {
+                "username": username,
+                "join_date": datetime.now().strftime("%Y-%m-%d"),
+                "fixmerah_count": 0,
+                "last_used": None
+            }
+            self.save_data()
+            return True
+        return False
+
+    def get_user_access_type(self, user_id):
+        user_id_str = str(user_id)
+        if self.is_any_owner(user_id):
+            return "owner"
+        elif user_id_str in self.data["buyer_users"]:
+            return "buyer"
+        elif user_id_str in self.data["premium_users"]:
+            return "premium"
+        return "none"
+
+    # ==================== PREMIUM/BUYER ====================
+    def add_premium_access(self, user_id, days):
+        user_id_str = str(user_id)
+        self.data["premium_users"][user_id_str] = {
+            "added": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "days": days,
+            "expires": self.calculate_expiry_date(days)
+        }
+        self.save_data()
+        return True, f"✅ Premium access ditambahkan! {days} hari."
+
+    def add_buyer_access(self, user_id, days):
+        user_id_str = str(user_id)
+        self.data["buyer_users"][user_id_str] = {
+            "added": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "days": days,
+            "expires": self.calculate_expiry_date(days)
+        }
+        self.save_data()
+        return True, f"✅ Buyer access ditambahkan! {days} hari."
+
+    def calculate_expiry_date(self, days):
+        from datetime import datetime, timedelta
+        return (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    def update_fixmerah_count(self, user_id):
+        user_id_str = str(user_id)
+        if user_id_str in self.data["users"]:
+            self.data["users"][user_id_str]["fixmerah_count"] = self.data["users"][user_id_str].get("fixmerah_count", 0) + 1
+            self.data["users"][user_id_str]["last_used"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.save_data()
+
+premium = PremiumSystem()
+
+# ==================== EMAIL SYSTEM (DIPERBAIKI) ====================
+class EmailSystem:
+    def __init__(self):
+        self.config_file = "data/email_config.json"
+        self.load_config()
+
+    def load_config(self):
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    self.config = json.load(f)
+            else:
+                self.config = {"email": "", "password": "", "smtp_server": "smtp.gmail.com", "smtp_port": 587}
+                self.save_config()
+        except:
+            self.config = {"email": "", "password": "", "smtp_server": "smtp.gmail.com", "smtp_port": 587}
+            self.save_config()
+
+    def save_config(self):
+        try:
+            os.makedirs("data", exist_ok=True)
+            with open(self.config_file, 'w') as f:
+                json.dump(self.config, f, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving email config: {e}")
+
+    def set_email(self, email, password):
+        self.config["email"] = email.strip()
+        self.config["password"] = password.replace(" ", "")
+        self.save_config()
+        return True, f"✅ Email diatur: {email}"
+
+    def send_appeal(self, phone_number):
+        if not self.config.get("email") or not self.config.get("password"):
+            return False, "❌ Email belum dikonfigurasi!"
+
+        try:
+            formatted_phone = self.format_phone_number(phone_number)
+            msg = MIMEMultipart()
+            msg['From'] = self.config["email"]
+            msg['To'] = "support@support.whatsapp.com"
+            msg['Subject'] = f"WhatsApp Account Appeal - {formatted_phone}"
+            body = f"""
+Dear WhatsApp Support Team,
+
+I am writing to appeal for the recovery of my WhatsApp account associated with the following phone number:
+
+Phone Number: {formatted_phone}
+
+The account appears to be banned or restricted, and I believe this may have been an error. I have always adhered to WhatsApp's Terms of Service and Community Guidelines.
+
+Could you please review my account and assist with reinstating access? I would greatly appreciate your help in resolving this matter.
+
+Thank you for your attention to this issue.
+
+Best regards,
+WhatsApp User
+
+---
+This appeal was sent via WhatsApp Appeal Bot
+Sent on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+            msg.attach(MIMEText(body, 'plain'))
+
+            server = smtplib.SMTP(self.config.get("smtp_server", "smtp.gmail.com"), self.config.get("smtp_port", 587))
+            server.starttls()
+            server.login(self.config["email"], self.config["password"])
+            server.send_message(msg)
+            server.quit()
+
+            logger.info(f"Email sent successfully to WhatsApp support for {formatted_phone}")
+            return True, f"✅ Appeal email terkirim ke WhatsApp Support untuk nomor: {formatted_phone}"
+        except smtplib.SMTPAuthenticationError:
+            return False, "❌ Gagal login ke email. Periksa email dan password!"
+        except smtplib.SMTPException as e:
+            return False, f"❌ Error SMTP: {str(e)}"
+        except Exception as e:
+            logger.error(f"Email sending error: {e}")
+            return False, f"❌ Error mengirim email: {str(e)}"
+
+    def format_phone_number(self, phone):
+        phone = re.sub(r'\D', '', phone)
+        if phone.startswith('0'):
+            phone = '62' + phone[1:]
+        elif phone.startswith('8') and len(phone) <= 11:
+            phone = '62' + phone
+        if not phone.startswith('+'):
+            phone = '+' + phone
+        return phone
+
+email = EmailSystem()
