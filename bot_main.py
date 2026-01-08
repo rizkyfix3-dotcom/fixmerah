@@ -1,4 +1,4 @@
-cat > bot_main.py << 'EOF'
+
 #!/usr/bin/env python3
 """
 WHATSAPP APPEAL BOT - MAIN RUNNER
