@@ -1,6 +1,6 @@
-# fixmerah
+# Fixmerah
 
-A comprehensive tool for fixing and managing your workflow.
+A project management and issue tracking tool.
 
 ## Installation
 
@@ -20,58 +20,51 @@ A comprehensive tool for fixing and managing your workflow.
 2. **Create a virtual environment (recommended):**
    ```bash
    python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-3. **Install dependencies:**
+3. **Activate the virtual environment:**
+   - On Windows:
+     ```bash
+     venv\Scripts\activate
+     ```
+   - On macOS/Linux:
+     ```bash
+     source venv/bin/activate
+     ```
+
+4. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
-## Running the Application
+## Running
 
-### Basic Usage
+1. **Ensure the virtual environment is activated** (if you created one)
 
-Start the application with:
-```bash
-python main.py
-```
+2. **Run the application:**
+   ```bash
+   python main.py
+   ```
+   or
+   ```bash
+   python -m fixmerah
+   ```
 
-### Configuration
+3. **Access the application:**
+   - Open your browser and navigate to `http://localhost:8000` (or the configured port)
 
-Before running, you may need to configure settings in the `config.yaml` or `.env` file. Update the necessary parameters for your environment.
+## Development
 
-### Examples
+To contribute to this project:
 
-- Run with default settings:
-  ```bash
-  python main.py
-  ```
-
-- Run with custom configuration:
-  ```bash
-  python main.py --config custom_config.yaml
-  ```
-
-- Run in debug mode:
-  ```bash
-  python main.py --debug
-  ```
-
-## Testing
-
-Run the test suite:
-```bash
-pytest tests/
-```
-
-## Contributing
-
-Contributions are welcome! Please fork the repository and submit a pull request with your changes.
+1. Create a feature branch from `main`
+2. Make your changes
+3. Ensure all tests pass
+4. Submit a pull request
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+[Add your license information here]
 
 ## Support
 
