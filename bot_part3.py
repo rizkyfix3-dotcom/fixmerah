@@ -1,4 +1,4 @@
-cat > bot_part3.py << 'EOF'
+
 #!/usr/bin/env python3
 """
 WHATSAPP APPEAL BOT - PART 3 (Main & Run)
