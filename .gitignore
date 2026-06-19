@@ -1,0 +1,31 @@
+
+# Environment variables
+
+.env
+
+# Data files
+
+data/email_config.json
+data/users.json
+
+# Logs
+
+bot.log
+
+# Python cache
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+
+venv/
+.venv/
+env/
+
+# OS files
+
+.DS_Store
+Thumbs.db
