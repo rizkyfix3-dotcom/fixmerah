@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 WHATSAPP APPEAL BOT - MAIN RUNNER
@@ -8,8 +7,8 @@ import os
 import sys
 
 print("="*60)
-print("🤖 WHATSAPP APPEAL BOT v3.0")
-print("👑 Created by: @Fixmerahbydho")
+print("🤖 WHATSAPP APPEAL BOT v3.1")
+print("👑 Created by: @Luanyi0032")
 print("="*60)
 
 # Check Python version
@@ -49,8 +48,8 @@ try:
     
     deps = {
         "python-telegram-bot": "telegram",
-        "email": "email",
-        "smtplib": "smtplib"
+        "asyncio": "asyncio",
+        "datetime": "datetime"
     }
     
     missing_deps = []
@@ -63,15 +62,18 @@ try:
     
     if missing_deps:
         print(f"\n⚠️ Missing dependencies: {', '.join(missing_deps)}")
-        print("Installing required packages...")
-        
-        if "python-telegram-bot" in missing_deps:
-            os.system("pip3 install python-telegram-bot==20.7")
-        
-        print("\n✅ Dependencies installed!")
+        print("Please install required packages manually:")
+        print("pip3 install -r requirements.txt")
     
     print("="*60)
-    print("🚀 Starting WhatsApp Appeal Bot...")
+    print("🚀 Starting WhatsApp Appeal Bot v3.1...")
+    print("="*60)
+    print("✨ Features Activated:")
+    print("  • Email Acak (Random Email Selection)")
+    print("  • Auto-Send Nomor Telepon")
+    print(f"  • Auto Check Reply setiap {bot_part1.EMAIL_CHECK_INTERVAL} detik")
+    print("  • Notifikasi Real-time User")
+    print("  • Timestamp Lengkap (DD/MM/YYYY HH:MM:SS)")
     print("="*60)
     
     # Run the bot
@@ -79,9 +81,7 @@ try:
     
 except ImportError as e:
     print(f"❌ Import Error: {e}")
-    print("\nPlease install missing dependencies:")
-    print("pip3 install python-telegram-bot==20.7")
-    print("\nOr run: pip3 install -r requirements.txt")
+    print("\nPlease install missing dependencies: pip3 install -r requirements.txt")
     
 except Exception as e:
     print(f"❌ Unexpected Error: {e}")
@@ -89,7 +89,7 @@ except Exception as e:
     print("1. Check your bot token is correct")
     print("2. Make sure all files are in same directory")
     print("3. Check internet connection")
-    print("4. Contact @Fixmerahbydho for support")
+    print("4. Contact @khanzaAura for support")
     
     import traceback
     traceback.print_exc()
@@ -101,4 +101,3 @@ except Exception as e:
     
     # Restart
     os.execv(sys.executable, ['python3'] + sys.argv)
-EOF

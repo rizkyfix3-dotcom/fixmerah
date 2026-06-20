@@ -19,12 +19,12 @@ from bot_part1 import (
 def validate_phone(phone_input):
     """Validasi dan format nomor telepon"""
     if not phone_input:
-        return False, "❌ Masukkan nomor telepon!"
+        return False, "Masukkan nomor telepon!"
     
     phone = re.sub(r'[^\d\+]', '', phone_input)
     
     if len(phone) < 8:
-        return False, "❌ Nomor telepon terlalu pendek!"
+        return False, "Nomor telepon terlalu pendek!"
     
     if phone.startswith('0'):
         phone = '62' + phone[1:]
@@ -34,11 +34,41 @@ def validate_phone(phone_input):
         phone = phone[1:]
     
     if not phone.isdigit():
-        return False, "❌ Nomor telepon harus angka!"
+        return False, "Nomor telepon harus angka!"
     
     formatted = '+' + phone
     
     return True, formatted
+
+def is_phone_number(text):
+    """Cek apakah teks adalah nomor telepon"""
+    # Hapus spasi
+    text = text.strip()
+    
+    # Hanya angka, +, atau strip
+    if not re.match(r'^[\d\+\-\s]+$', text):
+        return False
+    
+    # Hapus karakter khusus
+    clean_phone = re.sub(r'[^\d\+]', '', text)
+    
+    # Minimal 8 digit
+    if len(re.sub(r'\D', '', clean_phone)) < 8:
+        return False
+    
+    return True
+
+def get_realtime_date():
+    """Get realtime datetime dengan format lengkap"""
+    now = datetime.now()
+    hari_list = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu']
+    hari_nama = hari_list[now.weekday()]
+    
+    bulan_list = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+                 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
+    bulan_nama = bulan_list[now.month - 1]
+    
+    return now.strftime(f"{hari_nama}, %d {bulan_nama} %Y %H:%M:%S")
 
 # ==================== START COMMAND ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -47,54 +77,55 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or update.effective_user.first_name
     
     if MAINTENANCE and not premium.is_any_owner(user_id):
-        await update.message.reply_text("🔧 Bot sedang dalam maintenance. Coba lagi nanti!")
+        await update.message.reply_text("Bot sedang dalam maintenance. Coba lagi nanti!")
         return
     
     premium.add_user(user_id, username)
     
     keyboard = [
         [
-            InlineKeyboardButton("✅ VERIFIKASI CHANNEL", url=VERIFICATION_CHANNEL_LINK),
-            InlineKeyboardButton("✅ VERIFIKASI GROUP", url=VERIFICATION_GROUP_LINK)
+            InlineKeyboardButton("VERIFIKASI CHANNEL", url=VERIFICATION_CHANNEL_LINK),
+            InlineKeyboardButton("VERIFIKASI GROUP", url=VERIFICATION_GROUP_LINK)
         ],
-        [InlineKeyboardButton("✅ SAYA SUDAH VERIFIKASI", callback_data="verified")]
+        [InlineKeyboardButton("SAYA SUDAH VERIFIKASI", callback_data="verified")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    welcome_text = f"""
-👋 *Halo {update.effective_user.first_name}!*
+    welcome_text = f"""Halo {update.effective_user.first_name}!
 
-🤖 Selamat datang di *WhatsApp Appeal Bot*
-🔧 Bot untuk mengirim appeal ke WhatsApp Support
+Selamat datang di WhatsApp Appeal Bot
+Bot untuk mengirim appeal ke WhatsApp Support
 
-📋 *SYARAT MENGGUNAKAN BOT:*
-1. Join Channel: @tutorbekuintele
-2. Join Group: @tutorbekuintele_group
+SYARAT MENGGUNAKAN BOT:
+1. Join Channel: @LuanyiOTP
+2. Join Group: @Luanyi0035
 3. Klik tombol SAYA SUDAH VERIFIKASI setelah join
 
-🚀 *FITUR BOT:*
-✅ Kirim appeal ke WhatsApp Support
-✅ Support semua kode negara
-✅ Batch sending (buyer only)
-✅ System otomatis 24/7
+FITUR BOT:
+- Kirim appeal ke WhatsApp Support
+- Support semua kode negara
+- Batch sending (buyer only)
+- Auto-send ke nomor telepon yang dikirim
+- System otomatis 24/7
+- Email acak dengan prioritas yang belum digunakan
+- Check reply otomatis setiap 3 detik
 
-💎 *LEVEL AKUN:*
-• 👑 Owner - Akses penuh
-• 💰 Buyer - Fitur lengkap + batch
-• ⭐ Premium - Unlimited appeal
-• 👤 Free - Fitur dasar
+LEVEL AKUN:
+- Owner - Akses penuh
+- Buyer - Fitur lengkap + batch
+- Premium - Unlimited appeal
+- Free - Fitur dasar
 
-📊 *STATUS ANDA:*
-• User: {username}
-• ID: {user_id}
-• Status: {'✅ Verified' if premium.is_user_verified(user_id) else '❌ Belum verified'}
+STATUS ANDA:
+- User: {username}
+- ID: {user_id}
+- Status: {'Verified' if premium.is_user_verified(user_id) else 'Belum verified'}
+- Waktu: {get_realtime_date()}
 
-Klik tombol di bawah untuk verifikasi:
-    """
+Klik tombol di bawah untuk verifikasi:"""
     
     await update.message.reply_text(
         welcome_text,
-        parse_mode='Markdown',
         reply_markup=reply_markup
     )
 
@@ -123,78 +154,92 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 premium.mark_user_verified(user_id)
                 
                 keyboard = [
-                    [InlineKeyboardButton("📱 FIXMERAH", callback_data="menu_fixmerah")],
-                    [InlineKeyboardButton("📊 CEK AKSES", callback_data="menu_cekakses")],
-                    [InlineKeyboardButton("💬 HUBUNGI OWNER", callback_data="menu_hubungi")],
-                    [InlineKeyboardButton("📋 HELP", callback_data="menu_help")]
+                    [InlineKeyboardButton("FIXMERAH", callback_data="menu_fixmerah")],
+                    [InlineKeyboardButton("CEK AKSES", callback_data="menu_cekakses")],
+                    [InlineKeyboardButton("HUBUNGI OWNER", callback_data="menu_hubungi")],
+                    [InlineKeyboardButton("HELP", callback_data="menu_help")]
                 ]
                 
                 if premium.is_any_owner(user_id):
-                    keyboard.append([InlineKeyboardButton("👑 OWNER MENU", callback_data="menu_owner")])
+                    keyboard.append([InlineKeyboardButton("OWNER MENU", callback_data="menu_owner")])
                 
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
                 await query.edit_message_text(
-                    f"""✅ *VERIFIKASI BERHASIL!*
+                    f"""VERIFIKASI BERHASIL! ✅
 
 Selamat {query.from_user.first_name}, kamu sekarang bisa menggunakan bot!
+Waktu: {get_realtime_date()}
 
-🎯 *FITUR YANG TERSEDIA:*
-• /fixmerah [nomor] - Kirim appeal
-• /cekakses - Cek status akun
-• /menu - Tampilkan menu
+FITUR YANG TERSEDIA:
+- /fixmerah [nomor] - Kirim appeal
+- Kirim nomor telepon langsung - Auto-send appeal
+- /fixmerahall [nomor1 nomor2] - Batch (buyer)
+- /cekakses - Cek status akun
+- /menu - Tampilkan menu
 
-🚀 *UPGRADE KE PREMIUM/BUYER:*
-Hubungi @Fixmerahbydho untuk info lebih lanjut!
+FITUR BARU:
+✨ Bot otomatis kirim appeal saat nomor dikirim
+✨ Check reply otomatis setiap 3 detik
+✨ Email acak dengan prioritas belum digunakan
+✨ Timestamp realtime untuk setiap aktivitas
+
+UPGRADE KE PREMIUM/BUYER:
+Hubungi @khanzaAura untuk info lebih lanjut!
 
 Pilih menu di bawah:""",
-                    parse_mode='Markdown',
                     reply_markup=reply_markup
                 )
             else:
                 await query.edit_message_text(
-                    f"""❌ *VERIFIKASI GAGAL!*
+                    f"""VERIFIKASI GAGAL!
 
 Kamu harus join kedua channel dan group:
 
 1. Channel: {VERIFICATION_CHANNEL_LINK}
 2. Group: {VERIFICATION_GROUP_LINK}
 
-Setelah join, klik tombol verifikasi lagi!""",
-                    parse_mode='Markdown'
+Setelah join, klik tombol verifikasi lagi!
+Waktu: {get_realtime_date()}"""
                 )
                 
         except Exception as e:
             await query.edit_message_text(
-                f"""❌ *ERROR VERIFIKASI!*
+                f"""ERROR VERIFIKASI!
 
 Pastikan kamu sudah join:
-• Channel: {VERIFICATION_CHANNEL_LINK}
-• Group: {VERIFICATION_GROUP_LINK}
+- Channel: {VERIFICATION_CHANNEL_LINK}
+- Group: {VERIFICATION_GROUP_LINK}
 
-Error: {str(e)}""",
-                parse_mode='Markdown'
+Error: {str(e)}
+Waktu: {get_realtime_date()}"""
             )
     
     elif data == "menu_fixmerah":
         await query.edit_message_text(
-            """📱 *FITUR FIXMERAH*
+            f"""FITUR FIXMERAH
 
-📌 Format perintah:
-• /fixmerah [nomor]
+Format perintah:
+- /fixmerah [nomor]
   Contoh: /fixmerah +628123456789
 
-• /fixmerahall [nomor1] [nomor2] ... (buyer only)
+- /fixmerahall [nomor1] [nomor2] ... (buyer only)
   Contoh: /fixmerahall +628123456789 +628987654321
 
-🌍 *FORMAT NOMOR:*
-• Indonesia: +62, 08xxx, 628xxx
-• USA: +1xxxxxxxxxx
-• UK: +44xxxxxxxxxx
-• DLL
+AUTO-SEND:
+- Cukup kirimkan nomor telepon langsung
+- Bot akan otomatis mengirim appeal
+- Contoh: 08123456789 atau +628123456789
 
-📞 Contoh: /fixmerah +628123456789""",
-            parse_mode='Markdown'
+FORMAT NOMOR:
+- Indonesia: +62, 08xxx, 628xxx
+- USA: +1xxxxxxxxxx
+- UK: +44xxxxxxxxxx
+- DLL
+
+Contoh: /fixmerah +628123456789
+
+Waktu: {get_realtime_date()}"""
         )
     
     elif data == "menu_cekakses":
@@ -202,95 +247,103 @@ Error: {str(e)}""",
         user_data = premium.data["users"].get(str(user_id), {})
         
         if access_type == "owner":
-            status = "👑 OWNER"
+            status = "OWNER"
         elif access_type == "buyer":
-            status = "💰 BUYER"
+            status = "BUYER"
         elif access_type == "premium":
-            status = "⭐ PREMIUM"
+            status = "PREMIUM"
         else:
-            status = "👤 FREE USER"
+            status = "FREE USER"
         
         await query.edit_message_text(
-            f"""📊 *STATUS AKUN ANDA*
+            f"""STATUS AKUN ANDA
 
-👤 Nama: {query.from_user.first_name}
-🆔 ID: {user_id}
-📛 Username: @{query.from_user.username or 'Tidak ada'}
-📅 Bergabung: {user_data.get('join_date', 'Unknown')}
-🎯 Status: {status}
-📨 Total Appeal: {user_data.get('fixmerah_count', 0)} kali
+Nama: {query.from_user.first_name}
+ID: {user_id}
+Username: @{query.from_user.username or 'Tidak ada'}
+Bergabung: {user_data.get('join_date', 'Unknown')}
+Status: {status}
+Total Appeal: {user_data.get('fixmerah_count', 0)} kali
+Cek Waktu: {get_realtime_date()}
 
-💎 *UPGRADE:* Hubungi @Fixmerahbydho""",
-            parse_mode='Markdown'
+UPGRADE: Hubungi @khanzaAura"""
         )
     
     elif data == "menu_hubungi":
         await query.edit_message_text(
-            """💬 *HUBUNGI OWNER*
+            f"""HUBUNGI OWNER
 
 Untuk bantuan, upgrade, atau masalah teknis:
 
-👑 Owner: @Fixmerahbydho
-📢 Channel: https://t.me/tutorbekuintele
+Owner: @khanzaAura
+Channel: https://t.me/LuanyiOTP
 
-📝 *Format pesan:*
+Format pesan:
 /hubungiowner [pesan_anda]
 
-Contoh: /hubungiowner Saya mau upgrade ke buyer""",
-            parse_mode='Markdown'
+Contoh: /hubungiowner Saya mau upgrade ke buyer
+
+Waktu: {get_realtime_date()}"""
         )
     
     elif data == "menu_help":
         await query.edit_message_text(
-            """📋 *BANTUAN BOT*
+            f"""BANTUAN BOT
 
-🤖 *PERINTAH UTAMA:*
-• /start - Mulai bot
-• /menu - Tampilkan menu
-• /help - Bantuan ini
-• /about - Info bot
+PERINTAH UTAMA:
+- /start - Mulai bot
+- /menu - Tampilkan menu
+- /help - Bantuan ini
+- /about - Info bot
 
-📱 *APPEAL COMMANDS:*
-• /fixmerah [nomor] - Kirim appeal
-• /fixmerahall [nomor1 nomor2] - Batch (buyer)
+APPEAL COMMANDS:
+- /fixmerah [nomor] - Kirim appeal
+- /fixmerahall [nomor1 nomor2] - Batch (buyer)
+- Kirim nomor langsung - Auto-send
 
-👤 *USER COMMANDS:*
-• /cekakses - Cek status
-• /hubungiowner [pesan] - Hubungi owner
+USER COMMANDS:
+- /cekakses - Cek status
+- /hubungiowner [pesan] - Hubungi owner
 
-👑 *OWNER COMMANDS:* (owner only)
-• /setemail [email] [pass] - Atur email
-• /addakses [id] [days] - Tambah premium
-• /addbuyer [id] [days] - Tambah buyer
-• /addowner [id] - Tambah sub-owner
-• /stats - Statistik bot
-• /broadcast [pesan] - Broadcast
+OWNER COMMANDS: (owner only)
+- /setemail [email] [pass] - Atur email
+- /listemail - Lihat semua email
+- /addakses [id] [days] - Tambah premium
+- /addbuyer [id] [days] - Tambah buyer
+- /addowner [id] - Tambah sub-owner
+- /stats - Statistik bot
+- /broadcast [pesan] - Broadcast
 
-📞 Support: @Fixmerahbydho""",
-            parse_mode='Markdown'
+Support: @Fixmerahbydho
+Waktu: {get_realtime_date()}"""
         )
     
     elif data == "menu_owner":
         if premium.is_any_owner(user_id):
             await query.edit_message_text(
-                """👑 *OWNER MENU*
+                f"""OWNER MENU
 
-📋 *PERINTAH OWNER:*
-• /setemail [email] [pass] - Atur email bot
-• /addowner [user_id] - Tambah sub-owner
-• /removeowner [user_id] - Hapus sub-owner
-• /addakses [id] [days] - Tambah premium
-• /addbuyer [id] [days] - Tambah buyer
-• /stats - Lihat statistik
-• /broadcast [pesan] - Kirim ke semua user
-• /reply [id] [pesan] - Balas ke user
+PERINTAH OWNER:
+- /setemail [email] [pass] - Atur email bot
+- /listemail - Lihat email backup
+- /restoreemail [email] - Restore email backup
+- /deleteemail [email] - Hapus email backup
 
-📊 *DATA SYSTEM:*
-• User data: data/users.json
-• Email config: data/email_config.json
+- /addowner [user_id] - Tambah sub-owner
+- /removeowner [user_id] - Hapus sub-owner
+- /addakses [id] [days] - Tambah premium
+- /addbuyer [id] [days] - Tambah buyer
 
-⚠️ *PERHATIAN:* Gunakan dengan bijak!""",
-                parse_mode='Markdown'
+- /stats - Lihat statistik
+- /broadcast [pesan] - Kirim ke semua user
+- /checkreplies - Cek balasan WhatsApp
+
+DATA SYSTEM:
+- User data: data/users.json
+- Email config: data/email_config.json
+
+PERHATIAN: Gunakan dengan bijak!
+Waktu: {get_realtime_date()}"""
             )
 
 # ==================== FIXMERAH COMMAND ====================
@@ -300,23 +353,24 @@ async def fixmerah_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not premium.is_user_verified(user_id):
         await update.message.reply_text(
-            f"""❌ *BELUM TERVERIFIKASI!*
+            f"""BELUM TERVERIFIKASI!
 
 Kamu harus verifikasi dulu:
 1. Join Channel: {VERIFICATION_CHANNEL_LINK}
 2. Join Group: {VERIFICATION_GROUP_LINK}
-3. Klik /start untuk verifikasi"""
+3. Klik /start untuk verifikasi
+
+Waktu: {get_realtime_date()}"""
         )
         return
     
     if MAINTENANCE and not premium.is_any_owner(user_id):
-        await update.message.reply_text("🔧 Bot sedang maintenance. Coba lagi nanti!")
+        await update.message.reply_text("Bot sedang maintenance. Coba lagi nanti!")
         return
     
     if not context.args:
         await update.message.reply_text(
-            "❌ Format: /fixmerah [nomor_telepon]\nContoh: /fixmerah +628123456789",
-            parse_mode='Markdown'
+            f"Format: /fixmerah [nomor_telepon]\nContoh: /fixmerah +628123456789\nWaktu: {get_realtime_date()}"
         )
         return
     
@@ -329,45 +383,115 @@ Kamu harus verifikasi dulu:
     phone_number = result
     
     processing_msg = await update.message.reply_text(
-        f"""⏳ *MENGIRIM APPEAL...*
+        f"""MENGIRIM APPEAL...
 
-📱 Nomor: {phone_number}
-👤 Pengirim: {update.effective_user.first_name}
-🆔 ID: {user_id}
-⏰ Waktu: {datetime.now().strftime('%H:%M:%S')}
+Nomor: {phone_number}
+Pengirim: {update.effective_user.first_name}
+ID: {user_id}
+Waktu: {get_realtime_date()}
 
-Mohon tunggu..."""
-    )
+Mohon tunggu...""")
     
-    success, message = email.send_appeal(phone_number)
+    success, message = email.send_appeal(phone_number, user_id)
     
     if success:
         premium.update_fixmerah_count(user_id)
         
         await processing_msg.edit_text(
-            f"""✅ *APPEAL TERKIRIM!*
+            f"""APPEAL TERKIRIM! ✅
 
-📱 Nomor: {phone_number}
-✅ Status: Berhasil dikirim ke WhatsApp Support
-📧 Email: {email.config.get('email', 'Not set')}
-🕐 Waktu: {datetime.now().strftime('%H:%M:%S')}
+Nomor: {phone_number}
+Status: Berhasil dikirim ke WhatsApp Support
+Email: {email.config.get('active_email', 'Not set')}
+Waktu: {get_realtime_date()}
 
-📨 Appeal telah dikirim ke:
+Appeal telah dikirim ke:
 support@support.whatsapp.com
 
-💡 *Tips:* Tunggu 24-48 jam untuk respons dari WhatsApp."""
+💡 Tips: Tunggu 24-48 jam untuk respons dari WhatsApp.
+Bot akan memberitahu Anda jika ada balasan."""
         )
     else:
         await processing_msg.edit_text(
-            f"""❌ *GAGAL MENGIRIM!*
+            f"""GAGAL MENGIRIM! ❌
 
-📱 Nomor: {phone_number}
-❌ Error: {message}
+Nomor: {phone_number}
+Error: {message}
+Waktu: {get_realtime_date()}
 
-🔧 *SOLUSI:*
+SOLUSI:
 1. Periksa koneksi internet
 2. Owner: Cek email config (/setemail)
 3. Hubungi @Fixmerahbydho jika masalah berlanjut"""
+        )
+
+# ==================== AUTO-SEND NOMOR TELEPON ====================
+async def handle_phone_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle pesan berupa nomor telepon langsung"""
+    user_id = update.effective_user.id
+    message_text = update.message.text.strip()
+    
+    # Cek apakah user sudah verifikasi
+    if not premium.is_user_verified(user_id):
+        return
+    
+    # Cek apakah maintenance
+    if MAINTENANCE and not premium.is_any_owner(user_id):
+        return
+    
+    # Cek apakah teks adalah nomor telepon
+    if not is_phone_number(message_text):
+        return
+    
+    # Validasi nomor
+    success, result = validate_phone(message_text)
+    if not success:
+        return
+    
+    phone_number = result
+    
+    processing_msg = await update.message.reply_text(
+        f"""🚀 AUTO-SEND APPEAL
+
+Nomor: {phone_number}
+Status: Sedang diproses...
+Waktu: {get_realtime_date()}
+
+Mohon tunggu...""")
+    
+    success, message = email.send_appeal(phone_number, user_id)
+    
+    if success:
+        premium.update_fixmerah_count(user_id)
+        
+        await processing_msg.edit_text(
+            f"""✅ APPEAL TERKIRIM!
+
+Nomor: {phone_number}
+Status: Berhasil dikirim ke WhatsApp Support
+Email: {email.config.get('active_email', 'Not set')}
+Waktu: {get_realtime_date()}
+
+📧 Appeal dikirim ke: support@support.whatsapp.com
+⏰ Tunggu 24-48 jam untuk respons dari WhatsApp
+
+Total appeal Anda: {premium.data["users"][str(user_id)].get("fixmerah_count", 0)} kali
+
+✨ Bot akan memberitahu Anda saat ada balasan dari WhatsApp!"""
+        )
+    else:
+        await processing_msg.edit_text(
+            f"""❌ GAGAL MENGIRIM!
+
+Nomor: {phone_number}
+Error: {message}
+Waktu: {get_realtime_date()}
+
+🔧 SOLUSI:
+1. Periksa koneksi internet Anda
+2. Owner: Periksa email config dengan /setemail
+3. Coba lagi dalam beberapa saat
+4. Hubungi @Fixmerahbydho untuk bantuan"""
         )
 
 # ==================== FIXMERAHALL COMMAND (BUYER ONLY) ====================
@@ -377,23 +501,22 @@ async def fixmerahall_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     if not premium.is_any_owner(user_id) and str(user_id) not in premium.data["buyer_users"]:
         await update.message.reply_text(
-            "❌ *FITUR BUYER ONLY!*\n\nFitur ini hanya untuk user buyer.\nHubungi @Fixmerahbydho untuk upgrade!"
+            "FITUR BUYER ONLY!\n\nFitur ini hanya untuk user buyer.\nHubungi @khanzaAura untuk upgrade!"
         )
         return
     
     if not premium.is_user_verified(user_id):
-        await update.message.reply_text("❌ Belum terverifikasi! Gunakan /start dulu.")
+        await update.message.reply_text("Belum terverifikasi! Gunakan /start dulu.")
         return
     
     if not context.args:
         await update.message.reply_text(
-            f"❌ Format: /fixmerahall [nomor1] [nomor2] ...\nContoh: /fixmerahall +628123456789 +628987654321\n\nMaksimal {MAX_BATCH_SIZE} nomor per batch",
-            parse_mode='Markdown'
+            f"Format: /fixmerahall [nomor1] [nomor2] ...\nContoh: /fixmerahall +628123456789 +628987654321\n\nMaksimal {MAX_BATCH_SIZE} nomor per batch"
         )
         return
     
     if len(context.args) > MAX_BATCH_SIZE:
-        await update.message.reply_text(f"❌ Maksimal {MAX_BATCH_SIZE} nomor per batch!")
+        await update.message.reply_text(f"Maksimal {MAX_BATCH_SIZE} nomor per batch!")
         return
     
     phones = context.args
@@ -408,20 +531,20 @@ async def fixmerahall_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             invalid_phones.append(f"{phone}: {result}")
     
     if not valid_phones:
-        await update.message.reply_text("❌ Tidak ada nomor yang valid!\n" + "\n".join(invalid_phones))
+        await update.message.reply_text("Tidak ada nomor yang valid!\n" + "\n".join(invalid_phones))
         return
     
     progress_msg = await update.message.reply_text(
-        f"""⏳ *MEMPROSES BATCH...*
+        f"""MEMPROSES BATCH...
 
-📱 Total: {len(phones)} nomor
-✅ Valid: {len(valid_phones)} nomor
-❌ Invalid: {len(invalid_phones)} nomor
+Total: {len(phones)} nomor
+Valid: {len(valid_phones)} nomor
+Invalid: {len(invalid_phones)} nomor
+Waktu: {get_realtime_date()}
 
-⏰ Estimasi: {len(valid_phones) * BATCH_DELAY_SECONDS} detik
+Estimasi: {len(valid_phones) * BATCH_DELAY_SECONDS} detik
 
-Memulai pengiriman..."""
-    )
+Memulai pengiriman...""")
     
     success_count = 0
     fail_count = 0
@@ -430,17 +553,17 @@ Memulai pengiriman..."""
     for i, phone in enumerate(valid_phones, 1):
         try:
             await progress_msg.edit_text(
-                f"""⏳ *MENGIRIM BATCH...*
+                f"""MENGIRIM BATCH...
 
-📊 Progress: {i}/{len(valid_phones)}
-📱 Sedang mengirim: {phone}
-✅ Berhasil: {success_count}
-❌ Gagal: {fail_count}
+Progress: {i}/{len(valid_phones)}
+Sedang mengirim: {phone}
+Berhasil: {success_count}
+Gagal: {fail_count}
+Waktu: {get_realtime_date()}
 
-⏰ Delay: {BATCH_DELAY_SECONDS} detik"""
-            )
+Delay: {BATCH_DELAY_SECONDS} detik""")
             
-            success, message = email.send_appeal(phone)
+            success, message = email.send_appeal(phone, user_id)
             
             if success:
                 success_count += 1
@@ -455,17 +578,16 @@ Memulai pengiriman..."""
                 
         except Exception as e:
             fail_count += 1
-            results.append(f"❌ {phone}: Error - {str(e)}")
+            results.append(f"⚠️ {phone}: {str(e)}")
     
-    result_text = f"""📊 *BATCH COMPLETE!*
+    result_text = f"""BATCH COMPLETE! ✅
 
-📱 Total diproses: {len(valid_phones)} nomor
-✅ Berhasil: {success_count}
-❌ Gagal: {fail_count}
+Total diproses: {len(valid_phones)} nomor
+Berhasil: {success_count} ✅
+Gagal: {fail_count} ❌
+Selesai: {get_realtime_date()}
 
-⏰ Selesai: {datetime.now().strftime('%H:%M:%S')}
-
-📋 *HASIL DETAIL:*
+HASIL DETAIL:
 """ + "\n".join(results[:10])
 
     if len(results) > 10:

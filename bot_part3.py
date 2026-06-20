@@ -1,18 +1,88 @@
-
 #!/usr/bin/env python3
 """
 WHATSAPP APPEAL BOT - PART 3 (Main & Run)
 """
 
 import asyncio
-from datetime import datetime
+import threading
+import time
+from datetime import datetime, timedelta
 from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from bot_part1 import BOT_TOKEN, OWNER_ID, premium, email
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from bot_part1 import (
+    BOT_TOKEN, OWNER_ID, premium, email,
+    VERIFICATION_CHANNEL, VERIFICATION_GROUP,
+    VERIFICATION_CHANNEL_LINK, VERIFICATION_GROUP_LINK,
+    EMAIL_CHECK_INTERVAL
+)
 from bot_part2 import (
     start_command, button_handler, fixmerah_command, 
-    fixmerahall_command, validate_phone
+    fixmerahall_command, validate_phone, handle_phone_message, get_realtime_date
 )
+
+# Global variable untuk bot instance
+app_instance = None
+_email_thread_stop = threading.Event()
+
+# ==================== EMAIL CHECK TASK (BACKGROUND THREAD) ====================
+def check_email_replies_background():
+    """Background thread untuk check email replies setiap EMAIL_CHECK_INTERVAL detik"""
+    global app_instance, _email_thread_stop
+
+    print("[EMAIL CHECK] ✅ Background thread dimulai")
+    
+    while not _email_thread_stop.is_set():
+        try:
+            # lakukan blocking check pada thread (imap is blocking) - aman di thread
+            replies = email.check_for_replies()
+            
+            if replies:
+                print(f"[EMAIL CHECK] 🔔 Ditemukan {len(replies)} balasan baru")
+                
+                for reply in replies:
+                    phone_number = reply.get("phone")
+                    user_id = premium.get_appeal_user(phone_number) if phone_number else None
+                    
+                    if user_id:
+                        try:
+                            notification = f"""📧 BALASAN DARI WHATSAPP! ✅
+
+Nomor: {phone_number}
+
+Detail Balasan:
+• Dari: {reply.get('from', 'Unknown')}
+• Subject: {reply.get('subject', 'No Subject')}
+• Waktu Diterima: {reply.get('received_time', 'Unknown')}
+
+Isi Balasan:
+{reply.get('body', 'Tidak ada konten')}
+
+— 
+Cek email Anda untuk balasan lengkapnya!
+Email: {email.config.get('active_email', 'Not set')}"""
+                            
+                            # post coroutine ke event loop (safely)
+                            if app_instance and getattr(app_instance, "loop", None):
+                                asyncio.run_coroutine_threadsafe(
+                                    app_instance.bot.send_message(
+                                        chat_id=int(user_id),
+                                        text=notification
+                                    ),
+                                    app_instance.loop
+                                )
+                                print(f"[EMAIL CHECK] ✅ Notifikasi terkirim ke user {user_id}")
+                            else:
+                                print("[EMAIL CHECK] ❌ App loop belum tersedia, skip notification")
+                            
+                        except Exception as e:
+                            print(f"[EMAIL CHECK] ❌ Error sending notification: {e}")
+            
+            # sleep interval
+            _email_thread_stop.wait(EMAIL_CHECK_INTERVAL)
+            
+        except Exception as e:
+            print(f"[EMAIL CHECK] ❌ Error in background thread: {e}")
+            time.sleep(5)
 
 # ==================== OWNER COMMANDS ====================
 async def setemail_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -32,37 +102,77 @@ async def setemail_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     email_addr = context.args[0]
-    password = " ".join(context.args[1:])
-    
-    # Validasi email
-    if not "@" in email_addr or not "." in email_addr:
+    password = " ".join(context.args[1:])   
+    if "@" not in email_addr or "." not in email_addr:
         await update.message.reply_text("❌ Format email tidak valid!")
         return
     
     success, message = email.set_email(email_addr, password)
+    await update.message.reply_text(message, parse_mode='Markdown')
+
+async def listemail_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all email (active & backup)"""
+    user_id = update.effective_user.id
+    if not premium.is_any_owner(user_id):
+        await update.message.reply_text("❌ Hanya owner!")
+        return
     
-    # Test email connection
-    if success:
-        test_msg = await update.message.reply_text("🔧 Testing email connection...")
-        test_success, test_msg_text = email.send_appeal("+628123456789")
-        
-        if test_success:
-            await test_msg.edit_text(
-                f"✅ Email berhasil diatur dan tested!\n"
-                f"Email: {email_addr}\n"
-                f"Status: SMTP Connected & Working"
-            )
-        else:
-            await test_msg.edit_text(
-                f"⚠️ Email diatur tapi test gagal:\n"
-                f"Error: {test_msg_text}\n\n"
-                f"Periksa:\n"
-                f"1. Email dan password benar\n"
-                f"2. Allow less secure apps ON\n"
-                f"3. Gunakan App Password jika 2FA aktif"
-            )
-    else:
-        await update.message.reply_text(message)
+    emails = email.get_email_list()
+    
+    if not emails:
+        await update.message.reply_text("❌ Belum ada email yang dikonfigurasi!")
+        return
+    
+    text = f"📧 *DAFTAR EMAIL BOT*\n\n⏰ Waktu: {get_realtime_date()}\n\n"
+    for i, email_data in enumerate(emails, 1):
+        text += f"{i}. {email_data['status']}\n"
+        text += f"   Email: `{email_data['email']}`\n"
+        text += f"   Tanggal: {email_data['added_date']}\n"
+        text += f"   Digunakan: {email_data['used_count']} kali\n\n"
+    
+    text += "\n*PERINTAH:*\n"
+    text += "• `/restoreemail email@gmail.com` - Restore email\n"
+    text += "• `/deleteemail email@gmail.com` - Hapus email backup"
+    
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+async def restoreemail_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Restore email dari backup"""
+    user_id = update.effective_user.id
+    if not premium.is_any_owner(user_id):
+        await update.message.reply_text("❌ Hanya owner!")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Format: `/restoreemail email@gmail.com`\n"
+            "Contoh: `/restoreemail backup@gmail.com`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    email_addr = context.args[0]
+    success, message = email.restore_email(email_addr)
+    await update.message.reply_text(message, parse_mode='Markdown')
+
+async def deleteemail_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Delete email backup"""
+    user_id = update.effective_user.id
+    if not premium.is_any_owner(user_id):
+        await update.message.reply_text("❌ Hanya owner!")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Format: `/deleteemail email@gmail.com`\n"
+            "Contoh: `/deleteemail backup@gmail.com`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    email_addr = context.args[0]
+    success, message = email.delete_backup_email(email_addr)
+    await update.message.reply_text(message, parse_mode='Markdown')
 
 async def addowner_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Add sub-owner"""
@@ -87,32 +197,27 @@ async def addowner_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         success, message = premium.add_sub_owner(target_id, username)
         await update.message.reply_text(message)
         
-        # Kirim notifikasi ke target user
         try:
             await context.bot.send_message(
                 chat_id=target_id,
-                text=f"""👑 *SELAMAT! ANDA SEKARANG SUB-OWNER*
+                text=f"""👑 SELAMAT! ANDA SEKARANG SUB-OWNER
 
 Halo {target_user.first_name},
 
 Anda sekarang memiliki akses owner di WhatsApp Appeal Bot!
 
-🎯 *FITUR YANG DIDAPAT:*
+FITUR YANG DIDAPAT:
 • Semua perintah owner
 • Bisa manage user lain
 • Akses statistik lengkap
 
-⚠️ *PERHATIAN:*
+PERHATIAN:
 • Jangan menyalahgunakan akses
 • Jaga kerahasiaan data
 
-📋 *OWNER COMMANDS:*
-• /addakses - Tambah premium user
-• /addbuyer - Tambah buyer user
-• /stats - Lihat statistik
-• /broadcast - Kirim pesan ke semua user
-
-👑 Ditambahkan oleh: {update.effective_user.first_name}"""
+Ditambahkan oleh: {update.effective_user.first_name}
+Waktu: {get_realtime_date()}""",
+                parse_mode='Markdown'
             )
         except:
             pass
@@ -142,17 +247,19 @@ async def removeowner_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         success, message = premium.remove_sub_owner(target_id)
         await update.message.reply_text(message)
         
-        # Kirim notifikasi ke target user
         try:
             await context.bot.send_message(
                 chat_id=target_id,
-                text=f"""⚠️ *AKSES OWNER DIHAPUS*
+                text=f"""AKSES OWNER DIHAPUS
 
 Halo,
 
 Akses owner Anda telah dihapus dari WhatsApp Appeal Bot.
 
-Jika ini kesalahan, hubungi @Fixmerahbydho"""
+Jika ini kesalahan, hubungi @Fixmerahbydho
+
+Waktu: {get_realtime_date()}""",
+                parse_mode='Markdown'
             )
         except:
             pass
@@ -185,25 +292,26 @@ async def addakses_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         success, message = premium.add_premium_access(target_id, days)
         
-        # Kirim notifikasi ke user
         try:
             target_user = await context.bot.get_chat(target_id)
             await context.bot.send_message(
                 chat_id=target_id,
-                text=f"""⭐ *SELAMAT! ANDA SEKARANG PREMIUM*
+                text=f"""SELAMAT! ANDA SEKARANG PREMIUM
 
 Halo {target_user.first_name},
 
 Anda sekarang memiliki akses premium selama {days} hari!
 
-🎯 *FITUR PREMIUM:*
+FITUR PREMIUM:
 • Unlimited /fixmerah
 • Tanpa batas harian
 • Prioritas support
 
-⏰ Expired: {premium.data['premium_users'][str(target_id)]['expires']}
+Expired: {premium.data['premium_users'][str(target_id)]['expires']}
+Ditambahkan: {get_realtime_date()}
 
-Ditambahkan oleh: {update.effective_user.first_name}"""
+Ditambahkan oleh: {update.effective_user.first_name}""",
+                parse_mode='Markdown'
             )
         except:
             pass
@@ -240,26 +348,27 @@ async def addbuyer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         success, message = premium.add_buyer_access(target_id, days)
         
-        # Kirim notifikasi ke user
         try:
             target_user = await context.bot.get_chat(target_id)
             await context.bot.send_message(
                 chat_id=target_id,
-                text=f"""💰 *SELAMAT! ANDA SEKARANG BUYER*
+                text=f"""SELAMAT! ANDA SEKARANG BUYER
 
 Halo {target_user.first_name},
 
 Anda sekarang memiliki akses buyer selama {days} hari!
 
-🎯 *FITUR BUYER:*
+FITUR BUYER:
 • Semua fitur premium
 • Batch sending (/fixmerahall)
 • Prioritas tinggi
 • Support 24/7
 
-⏰ Expired: {premium.data['buyer_users'][str(target_id)]['expires']}
+Expired: {premium.data['buyer_users'][str(target_id)]['expires']}
+Ditambahkan: {get_realtime_date()}
 
-Ditambahkan oleh: {update.effective_user.first_name}"""
+Ditambahkan oleh: {update.effective_user.first_name}""",
+                parse_mode='Markdown'
             )
         except:
             pass
@@ -284,7 +393,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     verified = len(premium.data.get("verified_users", []))
     sub_owners = len(premium.data["owners"]["sub_owners"])
     
-    # Hitung total fixmerah
     total_fixmerah = 0
     today_fixmerah = 0
     today = datetime.now().strftime("%Y-%m-%d")
@@ -292,53 +400,39 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user_id_str, user_data in premium.data["users"].items():
         total_fixmerah += user_data.get("fixmerah_count", 0)
         
-        # Hitung yang hari ini
         last_used = user_data.get("last_used")
         if last_used and last_used.startswith(today):
             today_fixmerah += 1
     
-    # Hitung aktivitas 7 hari terakhir
-    recent_activity = {}
-    for i in range(7):
-        date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-        count = 0
-        for user_data in premium.data["users"].values():
-            last_used = user_data.get("last_used")
-            if last_used and last_used.startswith(date):
-                count += 1
-        recent_activity[date] = count
+    email_list = email.get_email_list()
+    active_email = email.config.get('active_email', 'Not set')
     
-    text = f"""📊 *STATISTIK BOT*
+    text = f"""STATISTIK BOT
 
-👥 *USERS:*
-• Total Users: {total_users} user
-• Premium: {premium_users} user
-• Buyer: {buyer_users} user
-• Verified: {verified} user
-• Sub-Owners: {sub_owners} user
+USERS:
+• Total Users: {total_users}
+• Premium: {premium_users}
+• Buyer: {buyer_users}
+• Verified: {verified}
+• Sub-Owners: {sub_owners}
 
-📨 *APPEAL STATS:*
-• Total Appeal: {total_fixmerah} kali
-• Hari Ini: {today_fixmerah} kali
-• Rata-rata: {total_fixmerah/max(total_users, 1):.1f}/user
+APPEAL STATS:
+• Total Appeal: {total_fixmerah}
+• Hari Ini: {today_fixmerah}
+• Rata-rata: {total_fixmerah/max(total_users, 1):.1f}
 
-👑 *OWNERSHIP:*
+OWNERSHIP:
 • Main Owner: {OWNER_ID}
-• Sub Owners: {', '.join(list(premium.data['owners']['sub_owners'].keys())[:5]) or 'None'}
-{f'• Dan {len(premium.data["owners"]["sub_owners"])-5} lainnya...' if len(premium.data['owners']['sub_owners']) > 5 else ''}
+• Sub Owners: {len(premium.data['owners']['sub_owners'])}
 
-📧 *EMAIL SYSTEM:*
-• Email: {email.config.get('email', '❌ Not set')}
-• Status: {'✅ Configured' if email.config.get('email') else '❌ Not configured'}
+EMAIL SYSTEM:
+• Email Aktif: {active_email}
+• Total Email: {len(email_list)}
+• Status: Configured
+• Email Acak: AKTIF
+• Prioritas: Email belum digunakan
 
-⏰ *UPDATE:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-📈 *7 HARI TERAKHIR:*
-"""
-    
-    # Tambah data 7 hari
-    for date, count in recent_activity.items():
-        text += f"• {date}: {count} appeal\n"
+UPDATE: {get_realtime_date()}"""
     
     await update.message.reply_text(text, parse_mode='Markdown')
 
@@ -365,68 +459,91 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     progress_msg = await update.message.reply_text(
-        f"""📢 *MEMULAI BROADCAST...*
+        f"""MEMULAI BROADCAST...
 
-📊 Target: {len(users)} user
-📝 Pesan: {message[:50]}...
-⏰ Mulai: {datetime.now().strftime('%H:%M:%S')}
+Target: {len(users)} user
+Pesan: {message[:50]}...
+Mulai: {get_realtime_date()}
 
-Mohon tunggu..."""
-    )
+Mohon tunggu...""")
     
     sent = 0
     failed = 0
-    failed_users = []
     
     for uid_str in users:
         try:
             await context.bot.send_message(
                 chat_id=int(uid_str),
-                text=f"""📢 *BROADCAST FROM OWNER*
+                text=f"""BROADCAST FROM OWNER
 
 {message}
 
 —
-🤖 *WhatsApp Appeal Bot*
-👑 Owner: @Fixmerahbydho""",
+WhatsApp Appeal Bot
+Owner: @khanzaAura
+Waktu: {get_realtime_date()}""",
                 parse_mode='Markdown'
             )
             sent += 1
             
-            # Update progress setiap 10 user
             if sent % 10 == 0:
                 await progress_msg.edit_text(
-                    f"""📢 *BROADCAST ONGOING...*
+                    f"""BROADCAST ONGOING...
 
-✅ Terkirim: {sent} user
-❌ Gagal: {failed} user
-📊 Progress: {sent}/{len(users)} ({sent/len(users)*100:.1f}%)
-
-⏰ Estimasi selesai: {(len(users)-sent)*0.2:.0f} detik lagi"""
-                )
+Terkirim: {sent}
+Gagal: {failed}
+Progress: {sent}/{len(users)} ({sent/len(users)*100:.1f}%)""")
             
-            await asyncio.sleep(0.2)  # Delay untuk hindari rate limit
+            await asyncio.sleep(0.2)
             
         except Exception as e:
             failed += 1
-            failed_users.append(uid_str)
-            print(f"Failed to send to {uid_str}: {e}")
     
-    result_text = f"""✅ *BROADCAST SELESAI!*
+    await progress_msg.edit_text(f"""BROADCAST SELESAI!
 
-📊 *HASIL:*
-• 📤 Berhasil: {sent} user
-• ❌ Gagal: {failed} user
-• 📈 Total: {len(users)} user
+HASIL:
+• Berhasil: {sent}
+• Gagal: {failed}
+• Total: {len(users)}
+• Waktu: {get_realtime_date()}""", parse_mode='Markdown')
 
-⏰ *WAKTU:*
-• Mulai: {datetime.now().strftime('%H:%M:%S')}
-• Durasi: ±{(sent+failed)*0.2:.0f} detik
-
-{f'👥 *GAGAL KE:* {", ".join(failed_users[:10])}' if failed_users else ''}
-{f'...dan {len(failed_users)-10} lainnya' if len(failed_users) > 10 else ''}"""
+async def checkreplies_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check email replies manually"""
+    user_id = update.effective_user.id
+    if not premium.is_any_owner(user_id):
+        await update.message.reply_text("❌ Hanya owner!")
+        return
     
-    await progress_msg.edit_text(result_text, parse_mode='Markdown')
+    status_msg = await update.message.reply_text("Mengecek balasan WhatsApp...")
+    
+    replies = email.check_for_replies()
+    
+    if not replies:
+        await status_msg.edit_text(f"""CEK SELESAI
+
+Hasil: Tidak ada balasan baru
+Waktu: {get_realtime_date()}
+
+Bot otomatis check setiap {EMAIL_CHECK_INTERVAL} detik!""")
+        return
+    
+    reply_text = f"""BALASAN DARI WHATSAPP
+
+Ditemukan: {len(replies)} balasan
+
+—\n"""
+    
+    for i, reply in enumerate(replies, 1):
+        reply_text += f"""{i}. {reply.get('subject', 'No Subject')}
+   From: {reply.get('from', 'Unknown')}
+   Phone: {reply.get('phone', 'Unknown')}
+   Received: {reply.get('received_time', 'Unknown')}
+   
+"""
+    
+    reply_text += f"\nWaktu: {get_realtime_date()}"
+    
+    await status_msg.edit_text(reply_text, parse_mode='Markdown')
 
 # ==================== USER COMMANDS ====================
 async def cekakses_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -439,61 +556,54 @@ async def cekakses_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_used = user_data.get("last_used", "Belum pernah")
     
     if access_type == "owner":
-        status = "👑 *ANDA ADALAH OWNER*"
-        features = """• Akses penuh ke semua fitur
-• Menu Owner tersedia
-• Bisa manage user lain
-• Buka semua command"""
-        color = "🟡"
+        status = "ANDA ADALAH OWNER"
+        features = "• Akses penuh ke semua fitur\n• Menu Owner tersedia\n• Bisa manage user lain"
+        color = "OWNER"
     elif access_type == "buyer":
-        status = "💰 *ANDA ADALAH BUYER*"
-        features = """• Fitur /fixmerah & /fixmerahall
-• Akses batch sending
-• Prioritas support
-• Unlimited appeal"""
-        color = "🟢"
+        status = "ANDA ADALAH BUYER"
+        features = "• Fitur /fixmerah & /fixmerahall\n• Akses batch sending\n• Prioritas support"
+        color = "BUYER"
     elif access_type == "premium":
-        status = "⭐ *ANDA ADALAH PREMIUM*"
-        features = """• Fitur /fixmerah unlimited
-• Tanpa batas harian
-• Support reguler
-• No cooldown"""
-        color = "🔵"
+        status = "ANDA ADALAH PREMIUM"
+        features = "• Fitur /fixmerah unlimited\n• Tanpa batas harian\n• Support reguler"
+        color = "PREMIUM"
     else:
-        status = "👤 *BELUM ADA AKSES KHUSUS*"
-        features = """• Harus verifikasi dulu (/start)
-• Akses fitur dasar
-• Hubungi owner untuk upgrade
-• Cooldown 10 menit"""
-        color = "⚪"
+        status = "BELUM ADA AKSES KHUSUS"
+        features = "• Harus verifikasi dulu (/start)\n• Akses fitur dasar\n• Hubungi owner untuk upgrade"
+        color = "FREE"
     
-    # Cek expiry jika premium/buyer
     expiry_info = ""
     if access_type == "premium" and str(user_id) in premium.data["premium_users"]:
         expiry = premium.data["premium_users"][str(user_id)].get("expires", "Unknown")
-        expiry_info = f"\n⏰ *Expired:* {expiry}"
+        expiry_info = f"\nExpired: {expiry}"
     elif access_type == "buyer" and str(user_id) in premium.data["buyer_users"]:
         expiry = premium.data["buyer_users"][str(user_id)].get("expires", "Unknown")
-        expiry_info = f"\n⏰ *Expired:* {expiry}"
+        expiry_info = f"\nExpired: {expiry}"
     
-    text = f"""📋 *INFO AKUN ANDA*
+    text = f"""INFO AKUN ANDA
 
-{color} {status}
+{status}
 
-👤 *DATA USER:*
+DATA USER:
 • Nama: {update.effective_user.first_name}
 • Username: @{update.effective_user.username or 'Tidak ada'}
-• ID: `{user_id}`
+• ID: {user_id}
 • Bergabung: {join_date}
 
-📊 *STATISTIK:*
-• Total appeal: {fixmerah_count} kali
+STATISTIK:
+• Total appeal: {fixmerah_count}
 • Terakhir digunakan: {last_used}{expiry_info}
 
-🔓 *FITUR YANG DAPAT DIAKSES:*
+FITUR YANG DAPAT DIAKSES:
 {features}
 
-💬 *UPGRADE:* Hubungi @Fixmerahbydho"""
+FITUR BARU:
+• Auto-send saat kirim nomor
+• Email acak prioritas belum digunakan
+• Check reply otomatis {EMAIL_CHECK_INTERVAL} detik
+• Timestamp realtime
+
+UPGRADE: Hubungi @khanzaAura"""
     
     await update.message.reply_text(text, parse_mode='Markdown')
 
@@ -501,7 +611,7 @@ async def hubungiowner_command(update: Update, context: ContextTypes.DEFAULT_TYP
     """Contact owner"""
     if not context.args:
         await update.message.reply_text(
-            "❌ Format: `/hubungiowner pesan_anda`\n"
+            "Format: `/hubungiowner pesan_anda`\n"
             "Contoh: `/hubungiowner Saya mau upgrade ke buyer`",
             parse_mode='Markdown'
         )
@@ -515,24 +625,19 @@ async def hubungiowner_command(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         await context.bot.send_message(
             chat_id=OWNER_ID,
-            text=f"""📨 *PESAN DARI USER*
+            text=f"""PESAN DARI USER
 
-👤 *User:* {user_name}
-🆔 *ID:* `{user_id}`
-📛 *Username:* {username}
-💬 *Pesan:* {message}
+User: {user_name}
+ID: {user_id}
+Username: {username}
+Pesan: {message}
 
-⏰ *Waktu:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-*Reply dengan:* `/reply {user_id} [pesan]`""",
+Waktu: {get_realtime_date()}""",
             parse_mode='Markdown'
         )
-        await update.message.reply_text("✅ Pesan terkirim ke owner!")
+        await update.message.reply_text("Pesan terkirim ke owner!")
     except:
-        await update.message.reply_text(
-            "❌ Gagal mengirim pesan.\n"
-            "Hubungi langsung: @Fixmerahbydho"
-        )
+        await update.message.reply_text("Gagal mengirim pesan.\nHubungi langsung: @Fixmerahbydho")
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show menu"""
@@ -540,103 +645,154 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show help"""
-    help_text = """🤖 *BANTUAN WHATSAPP APPEAL BOT*
+    help_text = f"""BANTUAN WHATSAPP APPEAL BOT
 
-📌 *FITUR UTAMA:*
+FITUR UTAMA:
 • /start - Mulai bot & verifikasi
 • /menu - Tampilkan menu utama
-• /help - Tampilkan bantuan ini
+• /help - Bantuan ini
 • /about - Info tentang bot
 
-📱 *FITUR APPEAL:*
+FITUR APPEAL:
 • /fixmerah [nomor] - Kirim appeal ke WhatsApp
-  Contoh: /fixmerah +628123456789
 • /fixmerahall [nomor1 nomor2] - Kirim batch (buyer only)
-  Maksimal 5 nomor per batch
+• Kirim nomor langsung - Auto-send appeal
 
-👤 *FITUR USER:*
+FITUR USER:
 • /cekakses - Cek status akses Anda
 • /hubungiowner [pesan] - Hubungi owner
 
-👑 *FITUR OWNER:* (hanya untuk owner)
+FITUR OWNER:
 • /setemail [email] [pass] - Atur email bot
+• /listemail - Lihat semua email backup
+• /restoreemail [email] - Restore email backup
+• /deleteemail [email] - Hapus email backup
 • /addowner [user_id] - Tambah sub-owner
 • /removeowner [user_id] - Hapus sub-owner
 • /addakses [id] [days] - Tambah premium user
 • /addbuyer [id] [days] - Tambah buyer user
 • /stats - Lihat statistik bot
 • /broadcast [pesan] - Kirim pesan ke semua user
-• /reply [id] [pesan] - Balas ke user
+• /checkreplies - Cek balasan WhatsApp
 
-🌍 *FORMAT NOMOR:*
-Support semua kode negara:
-• Indonesia: +62, 08xxx, 628xxx
-• USA: +1xxxxxxxxxx
-• UK: +44xxxxxxxxxx
-• Malaysia: +60xxxxxxxx
-• Singapore: +65xxxxxxxx
-• DLL
+Waktu: {get_realtime_date()}
 
-⚠️ *CATATAN:*
-1. Harus verifikasi dulu (/start)
-2. Fitur buyer hanya untuk user buyer
-3. Email harus diatur oleh owner
-4. Broadcast hanya untuk owner
-
-📞 *SUPPORT:* @Fixmerahbydho"""
+SUPPORT: @khanzaAura"""
     
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
 async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show about info"""
-    about_text = f"""🤖 *WHATSAPP APPEAL BOT*
+    about_text = f"""WHATSAPP APPEAL BOT v3.1
 
-🔧 *Versi:* 3.0 (Enhanced)
-👑 *Dibuat oleh:* @Fixmerahbydho
-📢 *Channel:* https://t.me/tutorbekuintele
-👥 *Group:* https://t.me/+WOtJ0Iv7slkzMTNl
+Versi: 3.1+ (Email Random + Auto Check Reply)
+Dibuat oleh: @Luanyi0032
+Channel: https://t.me/LuanyiOTP
 
-✨ *FITUR UTAMA:*
-✅ Verifikasi channel & group wajib
-✅ Kirim appeal via email ke WhatsApp Support
-✅ Support semua kode negara (200+ countries)
-✅ Batch sending untuk buyer
-✅ Multi-level access system
-✅ Database JSON local
-✅ Broadcast system
-✅ Sub-owner system
+FITUR UTAMA:
+- Verifikasi channel & group wajib
+- Kirim appeal via email ke WhatsApp Support
+- Support semua kode negara (200+ countries)
+- Batch sending untuk buyer
+- Multi-level access system
+- Email backup system
+- Auto-send nomor telepon
+- Email acak dengan prioritas yang belum digunakan
+- Check reply otomatis setiap {EMAIL_CHECK_INTERVAL} detik
+- Notifikasi real-time saat ada balasan
+- Timestamp realtime lengkap
 
-🔐 *LEVEL SYSTEM:*
-1. 👑 Owner - Full access
-2. 💰 Buyer - Full features + batch
-3. ⭐ Premium - Unlimited appeal
-4. 👤 Free - Basic features
-
-📧 *EMAIL SYSTEM:*
-• Menggunakan SMTP Gmail
-• Kirim ke: support@support.whatsapp.com
-• Format email profesional
-• Auto-retry on failure
-
-📊 *STATISTIK:*
+STATISTIK:
 • Total Users: {len(premium.data['users'])}
 • Total Appeal: {sum(u.get('fixmerah_count', 0) for u in premium.data['users'].values())}
-• Email Status: {'✅ Configured' if email.config.get('email') else '❌ Not configured'}
+• Email Status: Configured
+• Total Email: {len(email.get_email_list())}
 
-💬 *SUPPORT & FEEDBACK:*
-Hubungi @Fixmerahbydho untuk bantuan"""
+FITUR BARU v3.1:
+- Email Acak (Random Email Selection)
+- Auto Check Reply setiap {EMAIL_CHECK_INTERVAL} detik
+- Notifikasi User Real-time
+- Timestamp Lengkap
+
+SUPPORT: @khanzaAura
+
+Waktu Update: {get_realtime_date()}"""
     
     await update.message.reply_text(about_text, parse_mode='Markdown')
 
-async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Owner reply to user"""
-    user_id = update.effective_user.id
-    if not premium.is_any_owner(user_id):
-        await update.message.reply_text("❌ Hanya owner!")
-        return
+# ==================== MAIN FUNCTION ====================
+def main():
+    """Start the bot"""
+    global app_instance, _email_thread_stop
     
-    if len(context.args) < 2:
-        await update.message.reply_text(
-            "❌ Format: `/reply user_id pesan`\n"
-            "Contoh: `/reply 123456789 Terima kasih pesannya`",
- 
+    app = Application.builder().token(BOT_TOKEN).build()
+    app_instance = app
+
+    # Set bot app in email system (so it can use when needed)
+    try:
+        email.set_bot_app(app)
+    except Exception:
+        pass
+
+    # Ensure the app instance has a loop reference for thread notifications
+    try:
+        loop = asyncio.get_event_loop()
+        app_instance.loop = loop
+    except Exception:
+        app_instance.loop = None
+    
+    # Add handlers
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("menu", menu_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("about", about_command))
+    
+    # Appeal commands
+    app.add_handler(CommandHandler("fixmerah", fixmerah_command))
+    app.add_handler(CommandHandler("fixmerahall", fixmerahall_command))
+    
+    # User commands
+    app.add_handler(CommandHandler("cekakses", cekakses_command))
+    app.add_handler(CommandHandler("hubungiowner", hubungiowner_command))
+    
+    # Owner commands
+    app.add_handler(CommandHandler("setemail", setemail_command))
+    app.add_handler(CommandHandler("listemail", listemail_command))
+    app.add_handler(CommandHandler("restoreemail", restoreemail_command))
+    app.add_handler(CommandHandler("deleteemail", deleteemail_command))
+    app.add_handler(CommandHandler("addowner", addowner_command))
+    app.add_handler(CommandHandler("removeowner", removeowner_command))
+    app.add_handler(CommandHandler("addakses", addakses_command))
+    app.add_handler(CommandHandler("addbuyer", addbuyer_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("checkreplies", checkreplies_command))
+    
+    # Button handler
+    app.add_handler(CallbackQueryHandler(button_handler))
+    
+    # Auto-send nomor telepon handler - HARUS SEBELUM OTHER HANDLERS
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone_message))
+    
+    # Start background thread untuk check email replies (daemon)
+    _email_thread_stop.clear()
+    email_thread = threading.Thread(target=check_email_replies_background, daemon=True)
+    email_thread.start()
+    
+    print("="*60)
+    print("Bot started successfully!")
+    print(f"Owner ID: {OWNER_ID}")
+    print(f"Email: {email.config.get('active_email', 'Not set')}")
+    print(f"Total Email: {len(email.get_email_list())}")
+    print(f"Features: Email Random, Auto Check Reply")
+    print(f"Waktu: {get_realtime_date()}")
+    print("="*60)
+    
+    try:
+        app.run_polling()
+    finally:
+        # signal thread to stop when application stops
+        _email_thread_stop.set()
+
+if __name__ == "__main__":
+    main()
